@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Coins, Compass, Globe2, Loader2, Rocket, Target } from 'lucide-react'
 import { createDefaultEspecifica, createDefaultExploratoria } from '../../config/searchOptions'
 import { useActivity } from '../../context/ActivityContext'
@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { usePreferences } from '../../context/PreferencesContext'
 import { useToast } from '../../components/ui/Toast'
 import StatCard from '../../components/ui/StatCard'
+import { getRowId } from '../../utils/tableColumns'
 import ExploratoriaForm from './ExploratoriaForm'
 import EspecificaForm from './EspecificaForm'
 import ExecutionProgress from './ExecutionProgress'
@@ -79,9 +80,19 @@ export default function SearchWorkspace({
       return
     }
     setRunningExp(true)
+    const baselineIds = (Array.isArray(historialExploratorio) ? historialExploratorio : [])
+      .map((r) => getRowId(r))
+      .filter((id) => id !== null && id !== undefined)
+      .map(String)
+
+    const requestedNum = Number(exploratoria?.cantidad)
+    const requestedMeta = Number.isFinite(requestedNum) && requestedNum > 0 && requestedNum < 9999 ? requestedNum : null
+
     const activityId = activity?.startActivity('exploratoria', {
       baselineCount: historialExploratorio.length,
+      baselineIds,
       baselineCredits: usuario?.saldo_creditos,
+      requestedMeta,
     })
     try {
       const payload = buildExploratoriaPayload({ usuario, lang, exploratoria })
@@ -159,7 +170,7 @@ export default function SearchWorkspace({
   }
 
   const isExp = mode === 'exploratoria'
-  const bgRunningExp = Boolean(activity?.activeActivities?.some((a) => a.type === 'exploratoria'))
+  const bgRunningExp = Boolean(activity?.activeActivities?.some((a) => a.type === 'exploratoria') || activity?.isProcessing)
   const bgRunningEsp = Boolean(activity?.activeActivities?.some((a) => a.type === 'especifica'))
   const isRunningExp = runningExp || bgRunningExp
   const isRunningEsp = runningEsp || bgRunningEsp
@@ -167,19 +178,70 @@ export default function SearchWorkspace({
   const step = isExp ? (stepExp ?? (bgRunningExp ? 1 : null)) : (stepEsp ?? (bgRunningEsp ? 1 : null))
   const CtaIcon = anyRunning ? Loader2 : Rocket
 
-  const exploratoriaCount = Array.isArray(historialExploratorio) ? historialExploratorio.length : 0
+  /**
+   * Tope visual en tiempo real en la tabla durante el polling activo (`procesando:N`):
+   * Si por algún motivo llegan más de N registros nuevos en la ejecución actual,
+   * muestra como máximo N filas nuevas en pantalla para que el usuario nunca vea números inconsistentes.
+   */
+  const cappedHistorialExploratorio = useMemo(() => {
+    const rawList = Array.isArray(historialExploratorio) ? historialExploratorio : []
+    const isProcessingExp = Boolean(activity?.isProcessing)
+    const expAct = activity?.runningExploratoria
+    const limitN = activity?.reservationMeta ?? expAct?.metaSolicitada ?? null
+
+    if (!isProcessingExp || !limitN || limitN <= 0) {
+      return rawList
+    }
+
+    const baselineCount = expAct?.baselineCount ?? rawList.length
+    const maxTotalAllowed = baselineCount + limitN
+    if (rawList.length <= maxTotalAllowed) {
+      return rawList
+    }
+
+    const baseIdSet = new Set((expAct?.baselineIds || []).map(String))
+    if (baseIdSet.size > 0) {
+      let newShown = 0
+      const result = []
+      for (const row of rawList) {
+        const rid = getRowId(row)
+        const isExisting = rid !== null && rid !== undefined && baseIdSet.has(String(rid))
+        if (isExisting) {
+          result.push(row)
+        } else if (newShown < limitN) {
+          newShown += 1
+          result.push(row)
+        }
+      }
+      return result
+    }
+
+    // Respaldo si las filas no traen ID único: limitar el exceso a exactamente baselineCount + N
+    const excess = rawList.length - maxTotalAllowed
+    return rawList.slice(excess)
+  }, [historialExploratorio, activity?.isProcessing, activity?.runningExploratoria, activity?.reservationMeta])
+
+  const exploratoriaCount = cappedHistorialExploratorio.length
   const especificaCount = Array.isArray(resultadosLista) ? resultadosLista.length : 0
+
+  const rawCredits = usuario?.saldo_creditos ?? 0
+  const displayCredits = activity?.getVisualCredits ? activity.getVisualCredits(rawCredits) : rawCredits
+  const reservedMeta = activity?.isProcessing ? activity?.reservationMeta : null
+  const creditsHint =
+    reservedMeta && reservedMeta > 0
+      ? `Reservando hasta ${reservedMeta} créditos — solo se descuentan los entregados al finalizar`
+      : t('dash.statCreditsHint')
 
   return (
     <div className="space-y-6">
-      {/* Tarjetas superiores con conteos reales independientes */}
+      {/* Tarjetas superiores con conteos reales independientes y saldo blindado durante procesando:N */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 animate-fade-up">
         <StatCard
           tone="navy"
           icon={Coins}
           label={t('dash.statCredits')}
-          value={(usuario?.saldo_creditos ?? 0).toLocaleString(locale)}
-          hint={t('dash.statCreditsHint')}
+          value={displayCredits.toLocaleString(locale)}
+          hint={creditsHint}
         />
         <StatCard
           icon={Compass}
@@ -272,7 +334,7 @@ export default function SearchWorkspace({
       </section>
 
       <ResultsPanel
-        historialExploratorio={historialExploratorio}
+        historialExploratorio={cappedHistorialExploratorio}
         resultadosLista={resultadosLista}
         tab={resultsTab}
         onTab={setResultsTab}

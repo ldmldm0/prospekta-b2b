@@ -125,15 +125,36 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
               <span>Superadmin</span>
             </span>
           )}
-          <span
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-navy px-3 text-white dark:bg-electric-50 dark:text-ink"
-            id="credits-balance"
-            title={t('dash.creditsTitle')}
-          >
-            <Coins className="h-4 w-4 text-electric" />
-            <span className="font-display text-sm font-bold">{(usuario?.saldo_creditos ?? 0).toLocaleString(locale)}</span>
-            <span className="hidden text-[11px] opacity-75 sm:inline">{t('common.credits')}</span>
-          </span>
+          {(() => {
+            const rawCredits = usuario?.saldo_creditos ?? 0
+            const displayCredits = activity?.getVisualCredits ? activity.getVisualCredits(rawCredits) : rawCredits
+            const reservedMeta = activity?.isProcessing ? activity?.reservationMeta : null
+            return (
+              <div className="flex flex-col items-end">
+                <span
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-navy px-3 text-white dark:bg-electric-50 dark:text-ink"
+                  id="credits-balance"
+                  title={
+                    reservedMeta
+                      ? `Reservando hasta ${reservedMeta} créditos — solo se descuentan los entregados al finalizar`
+                      : t('dash.creditsTitle')
+                  }
+                >
+                  <Coins className="h-4 w-4 text-electric" />
+                  <span className="font-display text-sm font-bold">{displayCredits.toLocaleString(locale)}</span>
+                  <span className="hidden text-[11px] opacity-75 sm:inline">{t('common.credits')}</span>
+                </span>
+                {reservedMeta > 0 && (
+                  <span
+                    id="topbar-credits-reservation"
+                    className="mt-0.5 hidden text-[10px] font-medium text-amber-600 dark:text-amber-400 xl:inline"
+                  >
+                    Reservando hasta {reservedMeta} créditos — solo se descuentan los entregados al finalizar
+                  </span>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Botón desplegable de Actividad / Estado en Vivo */}
           <div className="relative" ref={activityRef}>
@@ -217,8 +238,9 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                     activity.activeActivities.map((item) => {
                       const elapsed = formatElapsed((activity.now || Date.now()) - item.startedAt)
                       const isExp = item.type === 'exploratoria'
-                      const nuevos = item.registrosNuevos ?? 0
+                      const rawNuevos = item.registrosNuevos ?? 0
                       const meta = item.metaSolicitada
+                      const nuevos = meta > 0 ? Math.min(rawNuevos, meta) : rawNuevos
                       const progressPct = meta > 0 ? Math.min(100, Math.round((nuevos / meta) * 100)) : null
                       return (
                         <div
@@ -247,6 +269,11 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                                     style={{ width: `${progressPct}%` }}
                                   />
                                 </div>
+                              )}
+                              {isExp && meta > 0 && (
+                                <p className="mt-1.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                  Reservando hasta {meta} créditos — solo se descuentan los entregados al finalizar
+                                </p>
                               )}
                             </div>
                           )}
