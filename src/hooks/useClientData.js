@@ -46,7 +46,7 @@ export function useClientData() {
     historial_exploratorio: [],
     resultados_lista: [],
     empresas_cliente: readCachedCompanies(idCliente),
-    estado_busqueda: null,
+    estado_busqueda: usuario?.estado_busqueda ?? null,
   }))
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -122,6 +122,7 @@ export function useClientData() {
           if (res.perfil?.email) patch.email = toClientEmailId(res.perfil.email)
           if (res.perfil?.estado) patch.estado = res.perfil.estado
           if (res.saldo_creditos !== null) patch.saldo_creditos = res.saldo_creditos
+          if (res.estado_busqueda !== undefined) patch.estado_busqueda = res.estado_busqueda
           if (Object.keys(patch).length) updateUser(patch)
         }
         return res
@@ -141,6 +142,17 @@ export function useClientData() {
 
   useEffect(() => {
     fetchData({ silent: false })
+  }, [fetchData])
+
+  // Re-consulta inmediata al volver a la pestaña del navegador para mantener estado_busqueda y estado_registro al día
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && mounted.current) {
+        fetchData({ silent: true })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [fetchData])
 
   /** Remueve inmediatamente las filas ocultadas/eliminadas de la vista actual y sincroniza en segundo plano. */

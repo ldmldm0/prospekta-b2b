@@ -50,6 +50,8 @@ export function parseCompletionStatus(estadoStr = '') {
   }
 }
 
+const SEARCH_ERROR_ALERT_MSG = 'Hubo un problema temporal con la búsqueda. Tus créditos no fueron descontados.'
+
 /**
  * Contexto global para rastrear ejecuciones en vivo (Búsqueda Exploratoria / Específica)
  * y auto-sincronizar `mis-datos` + `gestion-empresas` cada 15s (hasta 2 horas) mientras haya actividad.
@@ -84,6 +86,7 @@ export function ActivityProvider({ children }) {
     hasIncompleteRecords: false,
     processingMeta: null,
     completionInfo: null,
+    errorMessage: null,
   })
 
   const startActivity = useCallback(
@@ -122,6 +125,12 @@ export function ActivityProvider({ children }) {
           isProcessing: true,
           processingMeta: prev.processingMeta ?? numMeta,
           completionInfo: null,
+          errorMessage: null,
+        }))
+      } else {
+        setProcessingState((prev) => ({
+          ...prev,
+          errorMessage: null,
         }))
       }
       return id
@@ -145,8 +154,7 @@ export function ActivityProvider({ children }) {
               ...a,
               status: 'error',
               finishedAt: Date.now(),
-              errorMessage:
-                errorMessage || 'La búsqueda falló en el servidor. Revisa los parámetros o intenta nuevamente.',
+              errorMessage: errorMessage || SEARCH_ERROR_ALERT_MSG,
             }
           : a,
       ),
@@ -176,7 +184,7 @@ export function ActivityProvider({ children }) {
         err?.data?.mensaje ||
         err?.data?.message ||
         err?.message ||
-        'La búsqueda falló en el servidor. Revisa los parámetros o intenta nuevamente.'
+        SEARCH_ERROR_ALERT_MSG
 
       failActivity(id, exactServerMsg)
       return { keepPolling: false, message: exactServerMsg }
@@ -186,6 +194,8 @@ export function ActivityProvider({ children }) {
 
   /**
    * Sincroniza `estado_busqueda` y `estado_registro`:
+   * - Si `estado_busqueda === 'error'`, apaga el indicador y muestra la alerta:
+   *   "Hubo un problema temporal con la búsqueda. Tus créditos no fueron descontados."
    * - Mientras `estado_busqueda` comience con `procesando:` o existan registros del usuario con `estado_registro === 'no_completado_aun'`,
    *   mantiene encendido el punto verde animado ("Búsqueda en curso · Verificando prospectos...").
    * - En cuanto `estado_busqueda` cambie a `completado:...` y no queden filas del usuario en `no_completado_aun`,
@@ -201,12 +211,14 @@ export function ActivityProvider({ children }) {
     }) => {
       const currentNow = Date.now()
       const estadoStr = String(estadoBusqueda || '').trim().toLowerCase()
+      const isErrorStatus = estadoStr === 'error' || estadoStr.startsWith('error:')
       const metaMatch = estadoStr.match(/^procesando:(\d+)/)
       const parsedMeta = metaMatch ? Number(metaMatch[1]) : null
-      const isProcessingStatus = estadoStr.startsWith('procesando')
-      const incompleteRowsActive = Boolean(hasIncompleteRecords)
+      const isProcessingStatus = !isErrorStatus && estadoStr.startsWith('procesando')
+      const incompleteRowsActive = !isErrorStatus && Boolean(hasIncompleteRecords)
       const keepActiveGreen = isProcessingStatus || incompleteRowsActive
-      const completionInfo = !keepActiveGreen ? parseCompletionStatus(estadoStr) : null
+      const completionInfo = !keepActiveGreen && !isErrorStatus ? parseCompletionStatus(estadoStr) : null
+      const errorMsg = isErrorStatus ? SEARCH_ERROR_ALERT_MSG : null
 
       const numericSaldo =
         saldoCreditos !== null && saldoCreditos !== undefined && Number.isFinite(Number(saldoCreditos))
@@ -221,7 +233,8 @@ export function ActivityProvider({ children }) {
             prev.isProcessing === true &&
             prev.hasIncompleteRecords === incompleteRowsActive &&
             prev.processingMeta === nextMeta &&
-            prev.completionInfo === null
+            prev.completionInfo === null &&
+            prev.errorMessage === null
           ) {
             return prev
           }
@@ -231,6 +244,7 @@ export function ActivityProvider({ children }) {
             hasIncompleteRecords: incompleteRowsActive,
             processingMeta: nextMeta,
             completionInfo: null,
+            errorMessage: null,
           }
         }
 
@@ -243,7 +257,8 @@ export function ActivityProvider({ children }) {
           prev.processingMeta === null &&
           prevMsg === nextMsg &&
           prev.completionInfo?.entregados === (completionInfo?.entregados ?? null) &&
-          prev.completionInfo?.pedidos === (completionInfo?.pedidos ?? null)
+          prev.completionInfo?.pedidos === (completionInfo?.pedidos ?? null) &&
+          prev.errorMessage === errorMsg
         ) {
           return prev
         }
@@ -253,6 +268,7 @@ export function ActivityProvider({ children }) {
           hasIncompleteRecords: false,
           processingMeta: null,
           completionInfo,
+          errorMessage: errorMsg,
         }
       })
 
@@ -265,6 +281,17 @@ export function ActivityProvider({ children }) {
             hasAnyRunning = true
           }
           if (a.status !== 'running') return a
+
+          if (isErrorStatus) {
+            changed = true
+            return {
+              ...a,
+              status: 'error',
+              finishedAt: currentNow,
+              errorMessage: SEARCH_ERROR_ALERT_MSG,
+            }
+          }
+
           const count = a.type === 'exploratoria' ? exploratoriaCount : especificaCount
           const elapsed = currentNow - a.startedAt
           const rawNuevos = Math.max(0, count - a.baselineCount)
@@ -304,7 +331,7 @@ export function ActivityProvider({ children }) {
           return a
         })
 
-        // Si el backend reporta procesando: o hay registros en no_completado_aun y no había actividad en curso, la creamos automáticamente
+        // Si el backend reporta procesando: o hay registros en no_completado_aun (ej. al recargar la página con F5) y no había actividad en curso, la creamos automáticamente
         if (keepActiveGreen && !hasAnyRunning) {
           changed = true
           const id = `exploratoria-${currentNow}-sync`
@@ -364,6 +391,10 @@ export function ActivityProvider({ children }) {
     activities.find((a) => a.status === 'completed' && a.completionMessage)?.completionMessage ||
     null
 
+  const errorMessage =
+    processingState.errorMessage ||
+    (!hasRunning ? activities.find((a) => a.status === 'error' && a.errorMessage)?.errorMessage || null : null)
+
   // Auto-sincronización cada 15 segundos mientras exista una búsqueda activa o registros en no_completado_aun
   useEffect(() => {
     if (!hasRunning) return undefined
@@ -398,6 +429,7 @@ export function ActivityProvider({ children }) {
       estadoBusqueda: processingState.estadoBusqueda,
       completionInfo,
       completionMessage,
+      errorMessage,
       reservationMeta,
       runningExploratoria,
       getVisualCredits,
@@ -419,6 +451,7 @@ export function ActivityProvider({ children }) {
       processingState.estadoBusqueda,
       completionInfo,
       completionMessage,
+      errorMessage,
       reservationMeta,
       runningExploratoria,
       getVisualCredits,

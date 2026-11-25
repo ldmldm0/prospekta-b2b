@@ -164,7 +164,7 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
           <div className="relative" ref={activityRef}>
             {(() => {
               const latestError = !activity?.hasRunning
-                ? activity?.activities?.find((a) => a.status === 'error')
+                ? activity?.errorMessage || activity?.activities?.find((a) => a.status === 'error')
                 : null
               const hasError = Boolean(latestError)
               return (
@@ -213,7 +213,7 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                       className={`h-4 w-4 ${
                         activity?.hasRunning
                           ? 'text-emerald-500'
-                          : activity?.activities?.[0]?.status === 'error'
+                          : activity?.errorMessage || activity?.activities?.[0]?.status === 'error'
                             ? 'text-red-500'
                             : 'text-electric'
                       }`}
@@ -224,14 +224,14 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                       activity?.hasRunning
                         ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
-                        : activity?.activities?.[0]?.status === 'error'
+                        : activity?.errorMessage || activity?.activities?.[0]?.status === 'error'
                           ? 'bg-red-500/10 text-red-500 dark:text-red-300'
                           : 'bg-mist text-muted'
                     }`}
                   >
                     {activity?.hasRunning
                       ? 'En curso'
-                      : activity?.activities?.[0]?.status === 'error'
+                      : activity?.errorMessage || activity?.activities?.[0]?.status === 'error'
                         ? 'Error en ejecución'
                         : activity?.completionMessage || activity?.activities?.some((a) => a.status === 'completed')
                           ? 'Búsqueda finalizada'
@@ -301,7 +301,8 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                   ) : (
                     <div className="rounded-xl border border-line bg-mist/40 p-3 text-center">
                       <p className="text-xs font-semibold text-ink">
-                        {activity?.completionMessage ||
+                        {activity?.errorMessage ||
+                          activity?.completionMessage ||
                           (activity?.activities?.some((a) => a.status === 'completed')
                             ? 'Búsqueda finalizada'
                             : 'Sin procesos en ejecución')}
@@ -319,30 +320,30 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                     </div>
                   )}
 
-                  {activity?.activities?.some((a) => a.status === 'error') && (
+                  {(activity?.errorMessage || activity?.activities?.some((a) => a.status === 'error')) && (
                     <div className="space-y-2">
-                      {activity.activities
-                        .filter((a) => a.status === 'error')
-                        .slice(0, 2)
-                        .map((item) => (
-                          <div
-                            key={item.id}
-                            className="rounded-xl border border-red-500/30 bg-red-500/10 p-3"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="flex items-center gap-1.5 text-xs font-bold text-red-500 dark:text-red-300">
-                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                                {item.type === 'exploratoria' ? 'Búsqueda Exploratoria' : 'Búsqueda Específica'}
-                              </span>
-                              <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-semibold text-red-500 dark:text-red-200">
-                                Error en ejecución
-                              </span>
-                            </div>
-                            <p className="mt-1.5 text-[11px] leading-relaxed text-ink">
-                              {item.errorMessage || 'La búsqueda falló en el servidor. Revisa los parámetros o intenta nuevamente.'}
-                            </p>
+                      {(activity?.activities?.some((a) => a.status === 'error')
+                        ? activity.activities.filter((a) => a.status === 'error').slice(0, 2)
+                        : [{ id: 'db-error-state', type: 'exploratoria', errorMessage: activity.errorMessage }]
+                      ).map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-xl border border-red-500/30 bg-red-500/10 p-3"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 text-xs font-bold text-red-500 dark:text-red-300">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                              {item.type === 'exploratoria' ? 'Búsqueda Exploratoria' : 'Búsqueda Específica'}
+                            </span>
+                            <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-semibold text-red-500 dark:text-red-200">
+                              Error en ejecución
+                            </span>
                           </div>
-                        ))}
+                          <p className="mt-1.5 text-[11px] leading-relaxed text-ink">
+                            {item.errorMessage || 'Hubo un problema temporal con la búsqueda. Tus créditos no fueron descontados.'}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   )}
 

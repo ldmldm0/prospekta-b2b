@@ -11,6 +11,7 @@ const INDUSTRY_KEYS = ['industria', 'sector', 'industry']
 const SIZE_KEYS = ['tamano', 'tamaño', 'empleados', 'size']
 const VERIFIER_KEYS = ['verificador', 'estado_email', 'verificacion', 'verification']
 const PRIMARY_BADGE_KEYS = new Set(['empresa', 'nombre_empresa', 'company', 'nombre', 'name', 'contacto'])
+const LONG_TEXT_COL_RE = /(palabra|keyword|tags|descrip|resumen|summary|nota|mensaje|perfil|actividad|especialidad|bio|detalle|contexto)/i
 
 const pickField = (row, keys) => {
   if (!row || typeof row !== 'object') return ''
@@ -39,10 +40,57 @@ const isRowCreatedToday = (row) => {
 }
 
 /**
+ * Celda compacta con límite visual de 2 líneas (`line-clamp-2`) y botón "Ver más" / "Ver menos"
+ * para columnas largas como Palabras clave, Descripción, Resumen, etc.
+ */
+function CompactTextCell({ text, colKey, showNewBadge, newBadgeLabel }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLongColumn = LONG_TEXT_COL_RE.test(String(colKey || ''))
+  const needsClamp = (isLongColumn && text.length > 65) || text.length > 90 || text.includes('\n')
+
+  if (!needsClamp) {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span>{text}</span>
+        {showNewBadge && (
+          <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+            {newBadgeLabel}
+          </span>
+        )}
+      </span>
+    )
+  }
+
+  return (
+    <div className="max-w-[260px]">
+      <div className={expanded ? 'whitespace-pre-line break-words' : 'line-clamp-2 break-words'}>
+        <span>{text}</span>
+        {showNewBadge && (
+          <span className="ml-1.5 inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+            {newBadgeLabel}
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setExpanded((v) => !v)
+        }}
+        className="mt-0.5 inline-flex items-center text-[11px] font-semibold text-electric hover:underline cursor-pointer"
+      >
+        {expanded ? 'Ver menos' : 'Ver más'}
+      </button>
+    </div>
+  )
+}
+
+/**
  * Tabla genérica con buscador interno, barra de filtros avanzados (Fecha/Novedad, Industria, Tamaño, Verificación),
  * etiqueta verde "Nuevo" para registros creados hoy, selección individual/múltiple,
  * eliminación instantánea (soft delete) con spinner visual por fila, exportación CSV / Excel,
- * botones flotantes laterales (← / →) y arrastre horizontal con el cursor (drag-to-scroll).
+ * botones flotantes laterales (← / →), arrastre horizontal con el cursor (drag-to-scroll)
+ * y celdas largas compactadas a 2 líneas con botón "Ver más" / "Ver menos".
  * Muestra el 100% de los registros sin recortar a 20.
  */
 export default function DataTable({
@@ -369,6 +417,7 @@ export default function DataTable({
   const totalSelected = Array.from(selected).filter((id) => indexedRows.some((r) => r.id === id))
   const firstBadgeColKey =
     columns.find((c) => PRIMARY_BADGE_KEYS.has(c.key.toLowerCase()))?.key || columns[0]?.key || null
+  const newBadgeLabel = t('table.newBadge')
 
   return (
     <div className="border-t border-line">
@@ -634,7 +683,7 @@ export default function DataTable({
                                 <span>—</span>
                                 {showNewBadge && (
                                   <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                                    {t('table.newBadge')}
+                                    {newBadgeLabel}
                                   </span>
                                 )}
                               </span>
@@ -671,15 +720,13 @@ export default function DataTable({
                           )
                         }
                         return (
-                          <td key={c.key} className="max-w-[280px] px-4 py-3.5 align-top leading-relaxed text-ink-soft">
-                            <span className="inline-flex flex-wrap items-center gap-1.5">
-                              <span>{text}</span>
-                              {showNewBadge && (
-                                <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                                  {t('table.newBadge')}
-                                </span>
-                              )}
-                            </span>
+                          <td key={c.key} className="max-w-[260px] px-4 py-3.5 align-top leading-relaxed text-ink-soft">
+                            <CompactTextCell
+                              text={text}
+                              colKey={c.key}
+                              showNewBadge={showNewBadge}
+                              newBadgeLabel={newBadgeLabel}
+                            />
                           </td>
                         )
                       })}

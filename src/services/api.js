@@ -218,6 +218,7 @@ export function normalizeUser(u = {}) {
     rol: String(u.rol ?? 'cliente').toLowerCase(),
     saldo_creditos: toNumber(u.saldo_creditos),
     estado: u.estado ?? 'activo',
+    estado_busqueda: u.estado_busqueda ?? null,
   }
 }
 
@@ -225,18 +226,23 @@ const hasValidId = (r) => r && typeof r === 'object' && r.id !== null && r.id !=
 
 /**
  * Respuesta de mis-datos →
- * { perfil, saldo_creditos, historial_exploratorio, resultados_lista, empresas_cliente }.
+ * { perfil, saldo_creditos, estado_busqueda, historial_exploratorio, resultados_lista, empresas_cliente }.
  */
 export function normalizeClientData(d = {}) {
   const perfil = d.usuario || d.perfil || d.cliente || {}
   const saldo = d.saldo_creditos ?? perfil.saldo_creditos
+  const estadoBusqueda =
+    d.estado_busqueda ??
+    perfil.estado_busqueda ??
+    d.prospekta_usuarios?.estado_busqueda ??
+    null
   const rawEmpresas = toArray(
     d.empresas ?? d.empresas_cliente ?? d.prospekta_empresas_cliente ?? d.mis_empresas ?? d.empresas_cargadas,
   )
   return {
     perfil,
     saldo_creditos: saldo === undefined || saldo === null ? null : toNumber(saldo),
-    estado_busqueda: d.estado_busqueda ?? perfil.estado_busqueda ?? null,
+    estado_busqueda: estadoBusqueda,
     historial_exploratorio: toArray(d.historial_exploratorio).filter((r) => !isHidden(r)),
     resultados_lista: toArray(d.resultados_lista).filter((r) => !isHidden(r)),
     empresas_cliente: rawEmpresas.filter((r) => hasValidId(r) && !isHidden(r)).map((r, i) => normalizeCompanyRow(r, i)),

@@ -233,6 +233,7 @@ export default function SearchWorkspace({
       : t('dash.statCreditsHint')
 
   const completionMessage = !anyRunning ? activity?.completionMessage || null : null
+  const errorMessage = !anyRunning ? activity?.errorMessage || null : null
 
   return (
     <div className="space-y-6">
@@ -326,12 +327,13 @@ export default function SearchWorkspace({
           </button>
         </div>
 
-        {(anyRunning || step !== null || Boolean(completionMessage)) && (
+        {(anyRunning || step !== null || Boolean(completionMessage) || Boolean(errorMessage)) && (
           <ExecutionProgress
             step={step ?? (completionMessage ? 3 : null)}
             running={anyRunning}
             liveActivity={activity?.activeActivities?.find((a) => a.type === mode) || activity?.activeActivities?.[0] || null}
             completionMessage={completionMessage}
+            errorMessage={errorMessage}
           />
         )}
       </section>

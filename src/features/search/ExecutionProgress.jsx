@@ -1,12 +1,19 @@
-import { CheckCircle2, Coins, Sparkles } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Coins, Sparkles } from 'lucide-react'
 import { usePreferences } from '../../context/PreferencesContext'
 
 /** Barra de progreso y aviso de procesamiento en tiempo real mientras corre la búsqueda. step: 0..3 */
-export default function ExecutionProgress({ step, running = false, liveActivity = null, completionMessage = null }) {
+export default function ExecutionProgress({
+  step,
+  running = false,
+  liveActivity = null,
+  completionMessage = null,
+  errorMessage = null,
+}) {
   const { t } = usePreferences()
   const steps = t('search.progress')
   const safeStep = step === null || step === undefined ? 0 : step
-  const done = !running && (safeStep >= steps.length - 1 || Boolean(completionMessage))
+  const hasError = !running && Boolean(errorMessage)
+  const done = !running && !hasError && (safeStep >= steps.length - 1 || Boolean(completionMessage))
   const rawNuevos = liveActivity?.registrosNuevos ?? 0
   const meta = liveActivity?.metaSolicitada
   const hasLiveMeta = Boolean(meta && meta > 0)
@@ -20,6 +27,23 @@ export default function ExecutionProgress({ step, running = false, liveActivity 
       : null
 
   const finalDoneText = completionMessage || liveActivity?.completionMessage || 'Búsqueda finalizada'
+
+  if (hasError) {
+    return (
+      <div
+        id="search-error-alert"
+        className="mt-6 flex items-start gap-3 rounded-2xl border border-red-500/35 bg-red-500/10 p-4 sm:p-5 animate-pop"
+        role="alert"
+      >
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold text-red-600 dark:text-red-300">
+            {errorMessage}
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="mt-6 rounded-2xl border border-electric/30 bg-electric-50 p-4 sm:p-5 animate-pop" role="status" aria-live="polite">
