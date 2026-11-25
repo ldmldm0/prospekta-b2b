@@ -198,6 +198,20 @@ export default function DataTable({
     setIsDraggingUI(false)
   }, [])
 
+const EXEC_ID_KEYS = ['id_ejecucion', 'ejecucion_id', 'execution_id']
+
+const pickExecId = (row) => pickField(row, EXEC_ID_KEYS)
+
+const parseExecTimestamp = (execId) => {
+  if (!execId) return 0
+  const m = String(execId).match(/exec_(?:esp_)?(\d{10,16})/i) || String(execId).match(/(\d{10,16})/)
+  if (!m) return 0
+  const num = Number(m[1])
+  if (!Number.isFinite(num)) return 0
+  // Si viene en segundos (10 dígitos), pasar a ms
+  return num < 1e12 ? num * 1000 : num
+}
+
   const colLabels = useMemo(() => t('table.cols') || {}, [t])
   const columns = useMemo(() => deriveColumns(rows, colLabels, { hideKeys }), [rows, colLabels, hideKeys])
 
@@ -222,12 +236,51 @@ export default function DataTable({
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [rows, enableResultFilters])
 
+  /**
+   * Determina el `id_ejecucion` más reciente no nulo de la tabla actual
+   * (comparando el timestamp de `exec_TIMESTAMP_cliente` / `exec_esp_TIMESTAMP_cliente`,
+   * la fecha de creación de la fila o el ID numérico más alto).
+   */
+  const latestExecutionId = useMemo(() => {
+    if (!enableResultFilters || !Array.isArray(rows) || !rows.length) return null
+    let bestExecId = null
+    let bestScore = -1
+    let firstValidExecId = null
+
+    for (let i = 0; i < rows.length; i += 1) {
+      const r = rows[i]
+      const execId = pickExecId(r)
+      if (!execId) continue
+      if (firstValidExecId === null) firstValidExecId = execId
+
+      const execTs = parseExecTimestamp(execId)
+      const rowDate = parseRowDate(r)
+      const dateTs = rowDate ? rowDate.getTime() : 0
+      const rawId = Number(getRowId(r))
+      const idScore = Number.isFinite(rawId) ? rawId : 0
+      const score = Math.max(execTs, dateTs) || idScore
+
+      if (score > bestScore) {
+        bestScore = score
+        bestExecId = execId
+      }
+    }
+
+    return bestExecId || firstValidExecId
+  }, [rows, enableResultFilters])
+
   // Indexar TODAS las filas sin ningún recorte (.slice)
   const indexedRows = useMemo(
     () =>
       rows.map((row, idx) => {
         const id = getRowId(row)
-        return { row, id, key: id !== null ? String(id) : `row-${idx}`, isToday: isRowCreatedToday(row) }
+        return {
+          row,
+          id,
+          key: id !== null ? String(id) : `row-${idx}`,
+          isToday: isRowCreatedToday(row),
+          execId: pickExecId(row),
+        }
       }),
     [rows],
   )
@@ -239,8 +292,15 @@ export default function DataTable({
     const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null
     const toDate = dateTo ? new Date(`${dateTo}T23:59:59.999`) : null
 
-    return indexedRows.filter(({ row, isToday }) => {
+    return indexedRows.filter(({ row, isToday, execId }) => {
       if (enableResultFilters) {
+        if (dateFilter === 'ejecucion_reciente') {
+          if (latestExecutionId) {
+            if (!execId || execId !== latestExecutionId) return false
+          } else if (!isToday) {
+            return false
+          }
+        }
         if (dateFilter === 'hoy' && !isToday) return false
         if (dateFilter === '7dias') {
           const d = parseRowDate(row)
@@ -274,7 +334,7 @@ export default function DataTable({
       if (!q) return true
       return columns.some((c) => formatPlainValue(row[c.key], locale).toLowerCase().includes(q))
     })
-  }, [indexedRows, columns, query, locale, enableResultFilters, dateFilter, dateFrom, dateTo, industryFilter, sizeFilter, verifierFilter])
+  }, [indexedRows, columns, query, locale, enableResultFilters, dateFilter, latestExecutionId, dateFrom, dateTo, industryFilter, sizeFilter, verifierFilter])
 
   useEffect(() => {
     updateScrollButtons()
@@ -484,6 +544,7 @@ export default function DataTable({
               className="field h-9 w-full py-1 text-xs sm:w-44 cursor-pointer"
             >
               <option value="todos">{t('table.filters.dateAll')}</option>
+              <option value="ejecucion_reciente">{t('table.filters.dateRecentExec')}</option>
               <option value="hoy">{t('table.filters.dateToday')}</option>
               <option value="7dias">{t('table.filters.date7Days')}</option>
               <option value="rango">{t('table.filters.dateRange')}</option>

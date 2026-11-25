@@ -354,6 +354,7 @@ export const translations = {
       filters: {
         dateLabel: 'Fecha / Novedad',
         dateAll: 'Fecha: Todos',
+        dateRecentExec: 'Ejecución reciente',
         dateToday: 'Solo hoy',
         date7Days: 'Últimos 7 días',
         dateRange: 'Rango de fechas',
@@ -874,6 +875,7 @@ export const translations = {
       filters: {
         dateLabel: 'Date / Newness',
         dateAll: 'Date: All',
+        dateRecentExec: 'Recent execution',
         dateToday: 'Today only',
         date7Days: 'Last 7 days',
         dateRange: 'Date range',

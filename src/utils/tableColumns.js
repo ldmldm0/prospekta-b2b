@@ -13,6 +13,7 @@ const HIDDEN_KEYS = new Set([
   'mostrar_dashboard',
   'estado_registro',
   'estado_busqueda',
+  'id_ejecucion',
   'deleted_at',
   'updated_at',
   'password',
