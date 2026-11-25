@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileSpreadsheet, Loader2, Newspaper, RotateCcw, Search, SearchX, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileSpreadsheet, Loader2, Newspaper, RotateCcw, Search, SearchX, Trash2, UserPlus, X } from 'lucide-react'
 import Modal from './Modal'
 import { usePreferences } from '../../context/PreferencesContext'
 import { useToast } from './Toast'
@@ -98,6 +98,8 @@ export default function DataTable({
   exportPrefix = 'prospekta_export',
   selectable = false,
   onDeleteIds,
+  onConvertRow,
+  convertRowLabel = 'Crear cuenta',
   showNewsSoon = false,
   enableResultFilters = false,
   onFilterCountChange,
@@ -417,7 +419,10 @@ export default function DataTable({
   const totalSelected = Array.from(selected).filter((id) => indexedRows.some((r) => r.id === id))
   const firstBadgeColKey =
     columns.find((c) => PRIMARY_BADGE_KEYS.has(c.key.toLowerCase()))?.key || columns[0]?.key || null
+  const clickableNameColKey =
+    columns.find((c) => ['nombre', 'name', 'contacto'].includes(c.key.toLowerCase()))?.key || firstBadgeColKey
   const newBadgeLabel = t('table.newBadge')
+  const showActionsColumn = Boolean((selectable && onDeleteIds) || onConvertRow)
 
   return (
     <div className="border-t border-line">
@@ -645,7 +650,7 @@ export default function DataTable({
                     </th>
                   ))}
                   {showNewsSoon && <th className="whitespace-nowrap px-4 py-3.5">{t('search.results.cols.news')}</th>}
-                  {selectable && onDeleteIds && <th className="w-14 px-4 py-3.5 text-right">{t('table.actions')}</th>}
+                  {showActionsColumn && <th className="w-14 whitespace-nowrap px-4 py-3.5 text-right">{t('table.actions')}</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -676,11 +681,34 @@ export default function DataTable({
                         const raw = row[c.key]
                         const text = formatPlainValue(raw, locale)
                         const showNewBadge = isToday && c.key === firstBadgeColKey
+                        const isClickableNameCell = Boolean(onConvertRow && c.key === clickableNameColKey && text)
                         if (!text) {
                           return (
                             <td key={c.key} className="px-4 py-3.5 align-top text-muted/60">
                               <span className="inline-flex items-center gap-1.5">
                                 <span>—</span>
+                                {showNewBadge && (
+                                  <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                                    {newBadgeLabel}
+                                  </span>
+                                )}
+                              </span>
+                            </td>
+                          )
+                        }
+                        if (isClickableNameCell) {
+                          return (
+                            <td key={c.key} className="max-w-[260px] px-4 py-3.5 align-top">
+                              <span className="inline-flex flex-wrap items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => onConvertRow(row)}
+                                  title={`${convertRowLabel}: ${text}`}
+                                  className="inline-flex items-center gap-1.5 text-left font-bold text-electric hover:underline cursor-pointer"
+                                >
+                                  <span>{text}</span>
+                                  <UserPlus className="h-3.5 w-3.5 shrink-0" />
+                                </button>
                                 {showNewBadge && (
                                   <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
                                     {newBadgeLabel}
@@ -739,18 +767,34 @@ export default function DataTable({
                         </td>
                       )}
 
-                      {selectable && onDeleteIds && (
-                        <td className="px-4 py-3.5 text-right align-top">
-                          <button
-                            type="button"
-                            onClick={() => handleInstantRowDelete(id)}
-                            disabled={id === null || isRowDeleting}
-                            title={t('table.deleteRow')}
-                            aria-label={t('table.deleteRow')}
-                            className="grid ml-auto h-8 w-8 place-items-center rounded-lg text-muted transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40 cursor-pointer"
-                          >
-                            {isRowDeleting ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
-                          </button>
+                      {showActionsColumn && (
+                        <td className="whitespace-nowrap px-4 py-3.5 text-right align-top">
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            {onConvertRow && (
+                              <button
+                                type="button"
+                                onClick={() => onConvertRow(row)}
+                                title={convertRowLabel}
+                                aria-label={convertRowLabel}
+                                className="btn btn-ghost btn-sm h-8 px-2.5 text-[11px]"
+                              >
+                                <UserPlus className="h-3.5 w-3.5 text-electric" />
+                                <span>{convertRowLabel}</span>
+                              </button>
+                            )}
+                            {selectable && onDeleteIds && (
+                              <button
+                                type="button"
+                                onClick={() => handleInstantRowDelete(id)}
+                                disabled={id === null || isRowDeleting}
+                                title={t('table.deleteRow')}
+                                aria-label={t('table.deleteRow')}
+                                className="grid h-8 w-8 place-items-center rounded-lg text-muted transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40 cursor-pointer"
+                              >
+                                {isRowDeleting ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>

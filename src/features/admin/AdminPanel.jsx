@@ -90,6 +90,7 @@ export default function AdminPanel() {
   const [togglingId, setTogglingId] = useState(null)
 
   const [createOpen, setCreateOpen] = useState(false)
+  const [createInitialData, setCreateInitialData] = useState(null)
   const [editUser, setEditUser] = useState(null)
   const [creditsUser, setCreditsUser] = useState(null)
   const [deleteTargetUser, setDeleteTargetUser] = useState(null)
@@ -252,7 +253,21 @@ export default function AdminPanel() {
     }
   }
 
-  const closeCreateModal = useCallback(() => setCreateOpen(false), [])
+  const openManualCreateModal = useCallback(() => {
+    setCreateInitialData(null)
+    setCreateOpen(true)
+  }, [])
+
+  const openLeadConversionModal = useCallback((leadRow) => {
+    if (!leadRow || typeof leadRow !== 'object') return
+    setCreateInitialData(leadRow)
+    setCreateOpen(true)
+  }, [])
+
+  const closeCreateModal = useCallback(() => {
+    setCreateOpen(false)
+    setCreateInitialData(null)
+  }, [])
   const closeEditModal = useCallback(() => setEditUser(null), [])
   const closeCreditsModal = useCallback(() => setCreditsUser(null), [])
 
@@ -373,7 +388,7 @@ export default function AdminPanel() {
               <RefreshCw className={`h-3.5 w-3.5 text-electric ${refreshing ? 'animate-spin' : ''}`} />
               {t('dash.refresh')}
             </button>
-            <button type="button" id="admin-new-user" onClick={() => setCreateOpen(true)} className="btn btn-accent btn-sm">
+            <button type="button" id="admin-new-user" onClick={openManualCreateModal} className="btn btn-accent btn-sm">
               <UserPlus className="h-3.5 w-3.5" />
               {t('admin.newUser')}
             </button>
@@ -553,6 +568,8 @@ export default function AdminPanel() {
           <DataTable
             rows={leads}
             exportPrefix="prospekta_contacto_leads"
+            onConvertRow={openLeadConversionModal}
+            convertRowLabel={t('admin.createUserBtn')}
             emptyTitle={t('admin.emptyLeads')}
             emptySubtitle={t('admin.emptyLeadsSub')}
           />
@@ -652,6 +669,7 @@ export default function AdminPanel() {
         onClose={closeCreateModal}
         onCreate={handleCreateUser}
         canAssignSuperAdmin={hasSuperAdminAccess}
+        initialData={createInitialData}
       />
       <EditUserModal
         user={editUser}

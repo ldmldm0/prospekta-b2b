@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, Loader2, UserPlus } from 'lucide-react'
 import Modal from '../../components/ui/Modal'
 import { usePreferences } from '../../context/PreferencesContext'
@@ -6,15 +6,72 @@ import { usePreferences } from '../../context/PreferencesContext'
 const EMPTY = { nombre: '', empresa: '', email: '', password: '', rol: 'admin', saldo_creditos: 300 }
 
 /**
- * Modal de creación de cliente/usuario.
- * Usa callbacks estables y el Modal corregido para permitir escribir frases completas sin perder el foco.
+ * Extrae automáticamente la cantidad de créditos del campo `paquete_interes` del lead
+ * (ej. "Plan PyMEs / Inicio · 300 contactos verificados" → 300,
+ * "Plan Crecimiento · 1.000 contactos verificados" → 1000,
+ * "Volumen personalizado (+2.000 contactos)" → 2000).
+ * Si no detecta un número, devuelve 0.
  */
-export default function CreateUserModal({ open, onClose, onCreate, canAssignSuperAdmin = false }) {
+export function extractCreditsFromPackage(paqueteText = '') {
+  const raw = String(paqueteText || '').trim()
+  if (!raw) return 0
+  const match = raw.match(/(\d{1,3}(?:[.,]\d{3})+|\d+)/)
+  if (!match) return 0
+  const digitsOnly = match[1].replace(/[.,]/g, '')
+  const parsed = Number(digitsOnly)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
+}
+
+/**
+ * Modal de creación de cliente/usuario:
+ * - Si se abre desde el botón "Nuevo cliente" (`initialData = null`), usa el formulario vacío predeterminado (`EMPTY`).
+ * - Si se abre al hacer clic en un lead de "Leads de contacto" (`initialData` presente), prellena:
+ *   nombre, empresa, email, password: '', rol: 'cliente' (Cliente estándar) y saldo_creditos extraído del paquete de interés.
+ */
+export default function CreateUserModal({ open, onClose, onCreate, canAssignSuperAdmin = false, initialData = null }) {
   const { t } = usePreferences()
   const [form, setForm] = useState(EMPTY)
   const [showPwd, setShowPwd] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const initKeyRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) {
+      initKeyRef.current = null
+      return
+    }
+    const leadEmail = String(initialData?.email ?? initialData?.correo ?? '').trim().toLowerCase()
+    const leadName = String(initialData?.nombre ?? initialData?.name ?? initialData?.contacto ?? '').trim()
+    const key = initialData ? `lead:${leadEmail}:${leadName}:${initialData?.id ?? ''}` : 'manual'
+    if (initKeyRef.current === key) return
+    initKeyRef.current = key
+
+    if (initialData && typeof initialData === 'object') {
+      const paquete =
+        initialData.paquete_interes ??
+        initialData.plan ??
+        initialData.paquete ??
+        initialData.package ??
+        ''
+      const credits =
+        initialData.saldo_creditos !== undefined && initialData.saldo_creditos !== null
+          ? Math.max(0, Number(initialData.saldo_creditos) || 0)
+          : extractCreditsFromPackage(paquete)
+
+      setForm({
+        nombre: leadName,
+        empresa: String(initialData.empresa ?? initialData.company ?? '').trim(),
+        email: leadEmail,
+        password: '',
+        rol: 'cliente',
+        saldo_creditos: credits,
+      })
+    } else {
+      setForm(EMPTY)
+    }
+    setError('')
+  }, [open, initialData])
 
   const handleField = (key) => (e) => {
     const val = e.target.value
@@ -23,6 +80,7 @@ export default function CreateUserModal({ open, onClose, onCreate, canAssignSupe
 
   const handleClose = useCallback(() => {
     if (saving) return
+    initKeyRef.current = null
     setForm(EMPTY)
     setError('')
     onClose()
@@ -43,6 +101,7 @@ export default function CreateUserModal({ open, onClose, onCreate, canAssignSupe
         rol: form.rol,
         saldo_creditos: Math.max(0, Number(form.saldo_creditos) || 0),
       })
+      initKeyRef.current = null
       setForm(EMPTY)
       onClose()
     } catch (err) {
@@ -116,8 +175,8 @@ export default function CreateUserModal({ open, onClose, onCreate, canAssignSupe
               {t('admin.fields.role')}
             </label>
             <select id="nu-rol" className="field cursor-pointer" value={form.rol} onChange={handleField('rol')}>
-              <option value="admin">{t('admin.roles.admin')}</option>
               <option value="cliente">{t('admin.roles.cliente')}</option>
+              <option value="admin">{t('admin.roles.admin')}</option>
               {canAssignSuperAdmin && <option value="superadmin">{t('admin.roles.superadmin')}</option>}
             </select>
           </div>

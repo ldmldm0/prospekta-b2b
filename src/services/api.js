@@ -331,6 +331,23 @@ export function normalizeAdminData(d = {}) {
     metricas.boveda_general_especifica ??
     (espBodegaRows.length || boveda_especifica.length)
 
+  const rawLeads = toArray(d.leads ?? d.prospekta_contacto_leads ?? d.contacto_leads)
+  const seenLeads = new Set()
+  const deduplicatedLeads = rawLeads.filter((l) => {
+    if (!l || typeof l !== 'object') return false
+    const email = String(l.email ?? l.correo ?? '').trim().toLowerCase()
+    const nombre = String(l.nombre ?? l.name ?? '').trim().toLowerCase()
+    const empresa = String(l.empresa ?? l.company ?? '').trim().toLowerCase()
+    const paquete = String(l.paquete_interes ?? l.plan ?? '').trim().toLowerCase()
+    const mensaje = String(l.mensaje ?? '').trim().toLowerCase()
+    // Clave por contenido + minuto de creación para colapsar filas idénticas disparadas en el mismo envío
+    const rawDate = String(l.fecha_creacion ?? l.created_at ?? l.fecha ?? '').trim().slice(0, 16)
+    const sig = `${email}|${nombre}|${empresa}|${paquete}|${mensaje}|${rawDate}`
+    if (seenLeads.has(sig)) return false
+    seenLeads.add(sig)
+    return true
+  })
+
   return {
     usuarios: rawUsers.map((u) => {
       const email = String(u.email ?? u.correo ?? u.id_cliente ?? '').trim().toLowerCase()
@@ -340,7 +357,7 @@ export function normalizeAdminData(d = {}) {
         id_cliente: email || String(u.id_cliente ?? u.id ?? '').trim().toLowerCase(),
       }
     }),
-    leads: toArray(d.leads ?? d.prospekta_contacto_leads ?? d.contacto_leads),
+    leads: deduplicatedLeads,
     boveda_exploratoria,
     boveda_especifica,
     total_prospekta_exploratoria: Number(total_prospekta_exploratoria) || 0,
@@ -507,15 +524,45 @@ export const adminApi = {
     normalizeAdminData(await adminApi.run('consultar_boveda', id_admin, { token_licencia, master_token: token_licencia })),
 }
 
+let activeLeadPromise = null
+let lastLeadSignature = ''
+let lastLeadTimestamp = 0
+
 export const leadsApi = {
-  /** POST contacto-leads { nombre, empresa, email, telefono, paquete_interes, mensaje } */
-  submitContact: ({ nombre, empresa, email, telefono, paquete_interes, mensaje }) =>
-    callWebhook('CONTACTO_WEBHOOK', {
-      nombre,
-      empresa,
-      email: String(email || '').trim().toLowerCase(),
-      telefono,
-      paquete_interes,
-      mensaje,
-    }),
+  /**
+   * POST contacto-leads { nombre, empresa, email, telefono, paquete_interes, mensaje }
+   * Protegido contra envíos múltiples o simultáneos para que jamás se inserten 2 o 3 filas duplicadas.
+   */
+  submitContact: async ({ nombre, empresa, email, telefono, paquete_interes, mensaje }) => {
+    const cleanEmail = String(email || '').trim().toLowerCase()
+    const payload = {
+      nombre: String(nombre || '').trim(),
+      empresa: String(empresa || '').trim(),
+      email: cleanEmail,
+      telefono: String(telefono || '').trim(),
+      paquete_interes: String(paquete_interes || '').trim(),
+      mensaje: String(mensaje || '').trim(),
+    }
+    const sig = `${payload.email}|${payload.nombre}|${payload.empresa}|${payload.paquete_interes}|${payload.mensaje}`
+    const now = Date.now()
+
+    if (activeLeadPromise) {
+      return activeLeadPromise
+    }
+    if (sig === lastLeadSignature && now - lastLeadTimestamp < 8000) {
+      return { ok: true, deduplicated: true }
+    }
+
+    activeLeadPromise = callWebhook('CONTACTO_WEBHOOK', payload)
+      .then((res) => {
+        lastLeadSignature = sig
+        lastLeadTimestamp = Date.now()
+        return res
+      })
+      .finally(() => {
+        activeLeadPromise = null
+      })
+
+    return activeLeadPromise
+  },
 }

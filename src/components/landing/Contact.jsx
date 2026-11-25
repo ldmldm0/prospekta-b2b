@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Loader2, Mail, MessageCircle, Send, Clock } from 'lucide-react'
 import { PACKAGES } from '../../config/packages'
 import { CONTACT_CHANNELS } from '../../config/brand'
@@ -60,6 +60,7 @@ export default function Contact({ planRequest }) {
   const [form, setForm] = useState(EMPTY)
   const [status, setStatus] = useState('idle') // idle | sending | sent | error
   const [error, setError] = useState('')
+  const submittingRef = useRef(false)
 
   const planOptions = [
     ...PACKAGES.map((p) => ({
@@ -83,6 +84,8 @@ export default function Contact({ planRequest }) {
 
   const submit = async (e) => {
     e.preventDefault()
+    if (submittingRef.current || status === 'sending') return
+    submittingRef.current = true
     setStatus('sending')
     setError('')
     try {
@@ -105,6 +108,8 @@ export default function Contact({ planRequest }) {
     } catch (err) {
       setError(err.message || t('contact.error'))
       setStatus('error')
+    } finally {
+      submittingRef.current = false
     }
   }
 

@@ -42,9 +42,10 @@ export function PublicModalProvider({ children }) {
   const [status, setStatus] = useState('idle') // idle | sending | sent | error
   const [error, setError] = useState('')
   const firstInputRef = useRef(null)
+  const submittingRef = useRef(false)
 
   const closeModal = useCallback(() => {
-    if (status === 'sending') return
+    if (status === 'sending' || submittingRef.current) return
     setActiveModal(null)
   }, [status])
 
@@ -109,6 +110,8 @@ export function PublicModalProvider({ children }) {
 
   const submitAccessForm = async (e) => {
     e.preventDefault()
+    if (submittingRef.current || status === 'sending') return
+    submittingRef.current = true
     setStatus('sending')
     setError('')
     try {
@@ -131,6 +134,8 @@ export function PublicModalProvider({ children }) {
     } catch (err) {
       setError(err.message || t('contact.error'))
       setStatus('error')
+    } finally {
+      submittingRef.current = false
     }
   }
 
