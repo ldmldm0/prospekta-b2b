@@ -120,8 +120,7 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
             </span>
           )}
           {(() => {
-            const rawCredits = usuario?.saldo_creditos ?? 0
-            const displayCredits = activity?.getVisualCredits ? activity.getVisualCredits(rawCredits) : rawCredits
+            const displayCredits = Number(usuario?.saldo_creditos ?? 0)
             const reservedMeta = activity?.isProcessing ? activity?.reservationMeta : null
             return (
               <div className="flex flex-col items-end">
@@ -234,7 +233,7 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                       ? 'En curso'
                       : activity?.activities?.[0]?.status === 'error'
                         ? 'Error en ejecución'
-                        : activity?.estadoBusqueda === 'completado' || activity?.activities?.some((a) => a.status === 'completed')
+                        : activity?.completionMessage || activity?.activities?.some((a) => a.status === 'completed')
                           ? 'Búsqueda finalizada'
                           : 'Inactivo'}
                   </span>
@@ -302,9 +301,10 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                   ) : (
                     <div className="rounded-xl border border-line bg-mist/40 p-3 text-center">
                       <p className="text-xs font-semibold text-ink">
-                        {activity?.estadoBusqueda === 'completado' || activity?.activities?.some((a) => a.status === 'completed')
-                          ? 'Búsqueda finalizada'
-                          : 'Sin procesos en ejecución'}
+                        {activity?.completionMessage ||
+                          (activity?.activities?.some((a) => a.status === 'completed')
+                            ? 'Búsqueda finalizada'
+                            : 'Sin procesos en ejecución')}
                       </p>
                       <button
                         type="button"
@@ -354,14 +354,21 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                           .filter((a) => a.status === 'completed')
                           .slice(0, 3)
                           .map((item) => (
-                            <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-mist/40 px-2.5 py-1.5 text-[11px]">
-                              <span className="flex items-center gap-1.5 text-ink">
-                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                                {item.type === 'exploratoria' ? 'Búsqueda Exploratoria' : 'Búsqueda Específica'}
-                              </span>
-                              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-300">
-                                Búsqueda finalizada
-                              </span>
+                            <div key={item.id} className="flex flex-col gap-1 rounded-lg bg-mist/40 px-2.5 py-1.5 text-[11px]">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="flex items-center gap-1.5 font-semibold text-ink">
+                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                                  {item.type === 'exploratoria' ? 'Búsqueda Exploratoria' : 'Búsqueda Específica'}
+                                </span>
+                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-300">
+                                  Finalizada
+                                </span>
+                              </div>
+                              {(item.completionMessage || activity?.completionMessage) && (
+                                <p className="pl-5 text-[10px] leading-relaxed text-muted">
+                                  {item.completionMessage || activity?.completionMessage}
+                                </p>
+                              )}
                             </div>
                           ))}
                       </div>

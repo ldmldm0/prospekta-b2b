@@ -26,13 +26,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!activity) return
+    const isRowIncomplete = (r) =>
+      String(r?.estado_registro || '').trim().toLowerCase() === 'no_completado_aun'
+    const hasIncompleteRecords =
+      (Array.isArray(historial_exploratorio) && historial_exploratorio.some(isRowIncomplete)) ||
+      (Array.isArray(resultados_lista) && resultados_lista.some(isRowIncomplete))
+
     activity.syncResultCounts({
       exploratoriaCount: historial_exploratorio.length,
       especificaCount: resultados_lista.length,
       saldoCreditos: usuario?.saldo_creditos,
       estadoBusqueda: estado_busqueda,
+      hasIncompleteRecords,
     })
-  }, [activity, historial_exploratorio.length, resultados_lista.length, usuario?.saldo_creditos, estado_busqueda])
+  }, [activity, historial_exploratorio, resultados_lista, usuario?.saldo_creditos, estado_busqueda])
 
   const firstName = (usuario?.nombre || usuario?.email || '').split(' ')[0]
 

@@ -11,6 +11,8 @@ const HIDDEN_KEYS = new Set([
   'visible_dashboard',
   'visible en dashboard',
   'mostrar_dashboard',
+  'estado_registro',
+  'estado_busqueda',
   'deleted_at',
   'updated_at',
   'password',

@@ -6,6 +6,51 @@ const MAX_POLL_DURATION_MS = 120 * 60 * 1000 // 120 minutos (2 horas)
 const POLL_INTERVAL_MS = 15 * 1000 // 15 segundos
 
 /**
+ * Parsea `estado_busqueda` con formato `completado:entregados:pedidos` (o `completado`)
+ * y construye el mensaje transparente exacto solicitado:
+ * - Si entregados >= pedidos: "Búsqueda completada · {entregados} contactos verificados"
+ * - Si entregados < pedidos:  "Búsqueda finalizada · Se encontraron {entregados} de {pedidos} contactos que cumplen con tus filtros (solo se descontaron {entregados} créditos)"
+ */
+export function parseCompletionStatus(estadoStr = '') {
+  const clean = String(estadoStr || '').trim().toLowerCase()
+  if (!clean.startsWith('completado')) return null
+
+  const match = clean.match(/^completado:(\d+):(\d+)/)
+  if (match) {
+    const entregados = Number(match[1])
+    const pedidos = Number(match[2])
+    const message =
+      entregados >= pedidos
+        ? `Búsqueda completada · ${entregados} contactos verificados`
+        : `Búsqueda finalizada · Se encontraron ${entregados} de ${pedidos} contactos que cumplen con tus filtros (solo se descontaron ${entregados} créditos)`
+    return {
+      isCompleted: true,
+      entregados,
+      pedidos,
+      message,
+    }
+  }
+
+  const singleMatch = clean.match(/^completado:(\d+)/)
+  if (singleMatch) {
+    const entregados = Number(singleMatch[1])
+    return {
+      isCompleted: true,
+      entregados,
+      pedidos: entregados,
+      message: `Búsqueda completada · ${entregados} contactos verificados`,
+    }
+  }
+
+  return {
+    isCompleted: true,
+    entregados: null,
+    pedidos: null,
+    message: 'Búsqueda finalizada',
+  }
+}
+
+/**
  * Contexto global para rastrear ejecuciones en vivo (Búsqueda Exploratoria / Específica)
  * y auto-sincronizar `mis-datos` + `gestion-empresas` cada 15s (hasta 2 horas) mientras haya actividad.
  */
@@ -36,9 +81,9 @@ export function ActivityProvider({ children }) {
   const [processingState, setProcessingState] = useState({
     estadoBusqueda: null,
     isProcessing: false,
+    hasIncompleteRecords: false,
     processingMeta: null,
-    lockedSaldoInicial: null,
-    liveSaldoCreditos: null,
+    completionInfo: null,
   })
 
   const startActivity = useCallback(
@@ -66,15 +111,17 @@ export function ActivityProvider({ children }) {
           baselineCredits: numCredits,
           registrosNuevos: 0,
           metaSolicitada: numMeta,
+          completionMessage: null,
         },
         ...prev.slice(0, 7),
       ])
 
-      if (type === 'exploratoria' && numCredits !== null) {
+      if (type === 'exploratoria') {
         setProcessingState((prev) => ({
           ...prev,
-          lockedSaldoInicial: prev.lockedSaldoInicial ?? numCredits,
+          isProcessing: true,
           processingMeta: prev.processingMeta ?? numMeta,
+          completionInfo: null,
         }))
       }
       return id
@@ -138,19 +185,28 @@ export function ActivityProvider({ children }) {
   )
 
   /**
-   * Actualiza avance en vivo (registrosNuevos / metaSolicitada desde estado_busqueda "procesando:META")
-   * y marca como 'completed' ÚNICAMENTE cuando:
-   * - mis-datos devuelve estado_busqueda === 'completado' (tras al menos 15s desde el inicio), o
-   * - cambia el saldo_creditos del cliente (y ya no está en procesando:N).
-   * Nunca cierra la ejecución solo porque aparezcan registros nuevos mientras sigue procesando.
+   * Sincroniza `estado_busqueda` y `estado_registro`:
+   * - Mientras `estado_busqueda` comience con `procesando:` o existan registros del usuario con `estado_registro === 'no_completado_aun'`,
+   *   mantiene encendido el punto verde animado ("Búsqueda en curso · Verificando prospectos...").
+   * - En cuanto `estado_busqueda` cambie a `completado:...` y no queden filas del usuario en `no_completado_aun`,
+   *   apaga el punto verde al instante y muestra el mensaje exacto según `completado:entregados:pedidos`.
    */
   const syncResultCounts = useCallback(
-    ({ exploratoriaCount = 0, especificaCount = 0, saldoCreditos = null, estadoBusqueda = null }) => {
+    ({
+      exploratoriaCount = 0,
+      especificaCount = 0,
+      saldoCreditos = null,
+      estadoBusqueda = null,
+      hasIncompleteRecords = false,
+    }) => {
       const currentNow = Date.now()
       const estadoStr = String(estadoBusqueda || '').trim().toLowerCase()
       const metaMatch = estadoStr.match(/^procesando:(\d+)/)
       const parsedMeta = metaMatch ? Number(metaMatch[1]) : null
       const isProcessingStatus = estadoStr.startsWith('procesando')
+      const incompleteRowsActive = Boolean(hasIncompleteRecords)
+      const keepActiveGreen = isProcessingStatus || incompleteRowsActive
+      const completionInfo = !keepActiveGreen ? parseCompletionStatus(estadoStr) : null
 
       const numericSaldo =
         saldoCreditos !== null && saldoCreditos !== undefined && Number.isFinite(Number(saldoCreditos))
@@ -158,82 +214,79 @@ export function ActivityProvider({ children }) {
           : null
 
       setProcessingState((prev) => {
-        if (isProcessingStatus) {
+        if (keepActiveGreen) {
           const nextMeta = parsedMeta ?? prev.processingMeta ?? null
-          // Si aún no teníamos saldoInicial fijado, tomamos el mayor entre el saldo conocido antes y el actual
-          const baseCandidate =
-            prev.lockedSaldoInicial !== null
-              ? prev.lockedSaldoInicial
-              : prev.liveSaldoCreditos !== null && numericSaldo !== null
-                ? Math.max(prev.liveSaldoCreditos, numericSaldo)
-                : (numericSaldo ?? prev.liveSaldoCreditos)
           if (
-            prev.estadoBusqueda === estadoStr &&
+            prev.estadoBusqueda === (estadoStr || null) &&
             prev.isProcessing === true &&
+            prev.hasIncompleteRecords === incompleteRowsActive &&
             prev.processingMeta === nextMeta &&
-            prev.lockedSaldoInicial === baseCandidate &&
-            prev.liveSaldoCreditos === numericSaldo
+            prev.completionInfo === null
           ) {
             return prev
           }
           return {
-            estadoBusqueda: estadoStr,
+            estadoBusqueda: estadoStr || null,
             isProcessing: true,
+            hasIncompleteRecords: incompleteRowsActive,
             processingMeta: nextMeta,
-            lockedSaldoInicial: baseCandidate,
-            liveSaldoCreditos: numericSaldo,
+            completionInfo: null,
           }
         }
 
-        // Cuando estado_busqueda cambia a 'completado' (o deja de ser 'procesando'), liberamos el bloqueo y usamos el saldo real de BD
+        const prevMsg = prev.completionInfo?.message ?? null
+        const nextMsg = completionInfo?.message ?? null
         if (
           prev.estadoBusqueda === (estadoStr || null) &&
           prev.isProcessing === false &&
+          prev.hasIncompleteRecords === false &&
           prev.processingMeta === null &&
-          prev.lockedSaldoInicial === null &&
-          prev.liveSaldoCreditos === numericSaldo
+          prevMsg === nextMsg &&
+          prev.completionInfo?.entregados === (completionInfo?.entregados ?? null) &&
+          prev.completionInfo?.pedidos === (completionInfo?.pedidos ?? null)
         ) {
           return prev
         }
         return {
           estadoBusqueda: estadoStr || null,
           isProcessing: false,
+          hasIncompleteRecords: false,
           processingMeta: null,
-          lockedSaldoInicial: null,
-          liveSaldoCreditos: numericSaldo,
+          completionInfo,
         }
       })
 
       setActivities((prev) => {
         let changed = false
-        let hasExpRunning = false
+        let hasAnyRunning = false
 
         const next = prev.map((a) => {
-          if (a.type === 'exploratoria' && a.status === 'running') {
-            hasExpRunning = true
+          if (a.status === 'running') {
+            hasAnyRunning = true
           }
           if (a.status !== 'running') return a
           const count = a.type === 'exploratoria' ? exploratoriaCount : especificaCount
           const elapsed = currentNow - a.startedAt
           const rawNuevos = Math.max(0, count - a.baselineCount)
           const nextMeta = parsedMeta ?? a.metaSolicitada ?? null
-          // Tope visual en tiempo real: durante procesando:N nunca mostrar más de N encontrados
           const registrosNuevos =
-            isProcessingStatus && nextMeta && nextMeta > 0 ? Math.min(rawNuevos, nextMeta) : rawNuevos
+            keepActiveGreen && nextMeta && nextMeta > 0 ? Math.min(rawNuevos, nextMeta) : rawNuevos
 
           const creditsChanged =
             numericSaldo !== null &&
             a.baselineCredits !== null &&
             a.baselineCredits !== undefined &&
             Number(numericSaldo) !== Number(a.baselineCredits)
-          const serverCompleted = estadoStr === 'completado'
+          const serverCompleted = Boolean(completionInfo?.isCompleted)
 
-          if (!isProcessingStatus && (serverCompleted || creditsChanged || elapsed >= MAX_POLL_DURATION_MS)) {
+          // Solo cerramos la actividad cuando ya NO esté en procesando: ni queden filas en no_completado_aun
+          if (!keepActiveGreen && (serverCompleted || creditsChanged || elapsed >= MAX_POLL_DURATION_MS)) {
             changed = true
             return {
               ...a,
-              registrosNuevos: rawNuevos,
-              metaSolicitada: nextMeta,
+              registrosNuevos: completionInfo?.entregados ?? rawNuevos,
+              metaSolicitada: completionInfo?.pedidos ?? nextMeta,
+              completionMessage: completionInfo?.message || 'Búsqueda finalizada',
               status: 'completed',
               finishedAt: currentNow,
             }
@@ -251,8 +304,8 @@ export function ActivityProvider({ children }) {
           return a
         })
 
-        // Si el backend reporta procesando:N al recargar la página y no había actividad local registrada, la creamos automáticamente
-        if (isProcessingStatus && !hasExpRunning) {
+        // Si el backend reporta procesando: o hay registros en no_completado_aun y no había actividad en curso, la creamos automáticamente
+        if (keepActiveGreen && !hasAnyRunning) {
           changed = true
           const id = `exploratoria-${currentNow}-sync`
           return [
@@ -267,6 +320,7 @@ export function ActivityProvider({ children }) {
               baselineCredits: numericSaldo,
               registrosNuevos: 0,
               metaSolicitada: parsedMeta,
+              completionMessage: null,
             },
             ...next.slice(0, 7),
           ]
@@ -297,30 +351,20 @@ export function ActivityProvider({ children }) {
   }, [processingState.isProcessing, processingState.processingMeta, runningExploratoria])
 
   /**
-   * Calcula el saldo visible blindado:
-   * - Mientras `estado_busqueda` sea `procesando:N` (o haya búsqueda exploratoria activa en `procesando:N`),
-   *   congela el saldo visible en `saldoInicial` (y nunca permite que caiga por debajo de `saldoInicial - N`).
-   * - Cuando `estado_busqueda` cambia a `completado`, muestra el valor real devuelto por la base de datos.
+   * Devuelve siempre `saldo_creditos` directamente desde la base de datos sin hacer restas manuales en el navegador.
    */
-  const getVisualCredits = useCallback(
-    (rawCredits) => {
-      const dbCredits = Number(rawCredits ?? 0)
-      if (!processingState.isProcessing) {
-        return dbCredits
-      }
-      const saldoInicial =
-        runningExploratoria?.baselineCredits ??
-        processingState.lockedSaldoInicial ??
-        dbCredits
-      // Congelamos el saldo visible en saldoInicial (protegiendo que jamás caiga por debajo de saldoInicial - N)
-      const n = reservationMeta ?? 0
-      const minFloor = n > 0 ? Math.max(0, saldoInicial - n) : saldoInicial
-      return Math.max(saldoInicial, minFloor)
-    },
-    [processingState.isProcessing, processingState.lockedSaldoInicial, runningExploratoria, reservationMeta],
-  )
+  const getVisualCredits = useCallback((rawCredits) => {
+    const dbCredits = Number(rawCredits ?? 0)
+    return Number.isFinite(dbCredits) ? dbCredits : 0
+  }, [])
 
-  // Auto-sincronización cada 15 segundos mientras exista una búsqueda activa
+  const completionInfo = processingState.completionInfo
+  const completionMessage =
+    completionInfo?.message ||
+    activities.find((a) => a.status === 'completed' && a.completionMessage)?.completionMessage ||
+    null
+
+  // Auto-sincronización cada 15 segundos mientras exista una búsqueda activa o registros en no_completado_aun
   useEffect(() => {
     if (!hasRunning) return undefined
     const poller = setInterval(() => {
@@ -350,7 +394,10 @@ export function ActivityProvider({ children }) {
       hasRunning,
       manualRefreshing,
       isProcessing: processingState.isProcessing,
+      hasIncompleteRecords: processingState.hasIncompleteRecords,
       estadoBusqueda: processingState.estadoBusqueda,
+      completionInfo,
+      completionMessage,
       reservationMeta,
       runningExploratoria,
       getVisualCredits,
@@ -368,7 +415,10 @@ export function ActivityProvider({ children }) {
       hasRunning,
       manualRefreshing,
       processingState.isProcessing,
+      processingState.hasIncompleteRecords,
       processingState.estadoBusqueda,
+      completionInfo,
+      completionMessage,
       reservationMeta,
       runningExploratoria,
       getVisualCredits,

@@ -2,11 +2,11 @@ import { CheckCircle2, Coins, Sparkles } from 'lucide-react'
 import { usePreferences } from '../../context/PreferencesContext'
 
 /** Barra de progreso y aviso de procesamiento en tiempo real mientras corre la búsqueda. step: 0..3 */
-export default function ExecutionProgress({ step, running = false, liveActivity = null }) {
+export default function ExecutionProgress({ step, running = false, liveActivity = null, completionMessage = null }) {
   const { t } = usePreferences()
   const steps = t('search.progress')
   const safeStep = step === null || step === undefined ? 0 : step
-  const done = !running && safeStep >= steps.length - 1
+  const done = !running && (safeStep >= steps.length - 1 || Boolean(completionMessage))
   const rawNuevos = liveActivity?.registrosNuevos ?? 0
   const meta = liveActivity?.metaSolicitada
   const hasLiveMeta = Boolean(meta && meta > 0)
@@ -19,6 +19,8 @@ export default function ExecutionProgress({ step, running = false, liveActivity 
       ? `${nuevos} encontrados`
       : null
 
+  const finalDoneText = completionMessage || liveActivity?.completionMessage || 'Búsqueda finalizada'
+
   return (
     <div className="mt-6 rounded-2xl border border-electric/30 bg-electric-50 p-4 sm:p-5 animate-pop" role="status" aria-live="polite">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -26,7 +28,7 @@ export default function ExecutionProgress({ step, running = false, liveActivity 
           {done ? (
             <>
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-              <span>Búsqueda finalizada</span>
+              <span>{finalDoneText}</span>
             </>
           ) : (
             <>

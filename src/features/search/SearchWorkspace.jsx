@@ -224,17 +224,19 @@ export default function SearchWorkspace({
   const exploratoriaCount = cappedHistorialExploratorio.length
   const especificaCount = Array.isArray(resultadosLista) ? resultadosLista.length : 0
 
-  const rawCredits = usuario?.saldo_creditos ?? 0
-  const displayCredits = activity?.getVisualCredits ? activity.getVisualCredits(rawCredits) : rawCredits
+  // Saldo visible directamente desde `saldo_creditos` de la base de datos sin restas manuales en el navegador
+  const displayCredits = Number(usuario?.saldo_creditos ?? 0)
   const reservedMeta = activity?.isProcessing ? activity?.reservationMeta : null
   const creditsHint =
     reservedMeta && reservedMeta > 0
       ? `Reservando hasta ${reservedMeta} créditos — solo se descuentan los entregados al finalizar`
       : t('dash.statCreditsHint')
 
+  const completionMessage = !anyRunning ? activity?.completionMessage || null : null
+
   return (
     <div className="space-y-6">
-      {/* Tarjetas superiores con conteos reales independientes y saldo blindado durante procesando:N */}
+      {/* Tarjetas superiores con conteos reales independientes y saldo directo de BD */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 animate-fade-up">
         <StatCard
           tone="navy"
@@ -324,11 +326,12 @@ export default function SearchWorkspace({
           </button>
         </div>
 
-        {(anyRunning || step !== null) && (
+        {(anyRunning || step !== null || Boolean(completionMessage)) && (
           <ExecutionProgress
-            step={step}
+            step={step ?? (completionMessage ? 3 : null)}
             running={anyRunning}
             liveActivity={activity?.activeActivities?.find((a) => a.type === mode) || activity?.activeActivities?.[0] || null}
+            completionMessage={completionMessage}
           />
         )}
       </section>
