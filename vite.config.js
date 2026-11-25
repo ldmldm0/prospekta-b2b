@@ -62,5 +62,7 @@ function n8nBridgePlugin() {
 
 export default defineConfig({
   base: '/',
+  server: { allowedHosts: true },
+  preview: { allowedHosts: true },
   plugins: [react(), tailwindcss(), n8nBridgePlugin()],
 })
