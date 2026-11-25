@@ -8,12 +8,6 @@ import { usePreferences } from '../../context/PreferencesContext'
 import { usePublicModals } from '../../context/PublicModalContext'
 import { useRouter } from '../../router'
 
-const formatElapsed = (ms) => {
-  const totalSec = Math.max(0, Math.floor(ms / 1000))
-  const min = String(Math.floor(totalSec / 60)).padStart(2, '0')
-  const sec = String(totalSec % 60).padStart(2, '0')
-  return `${min}:${sec}`
-}
 
 /**
  * Barra superior privada: logo oficial, navegación entre Buscador (/dashboard) y Panel (/admin),
@@ -156,6 +150,17 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
             )
           })()}
 
+          {/* Indicador compacto en barra superior cuando hay búsqueda activa */}
+          {activity?.hasRunning && (
+            <span
+              id="topbar-live-status"
+              className="hidden items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-600 dark:text-emerald-300 md:inline-flex"
+            >
+              <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-500" />
+              <span>Búsqueda en curso · Verificando prospectos...</span>
+            </span>
+          )}
+
           {/* Botón desplegable de Actividad / Estado en Vivo */}
           <div className="relative" ref={activityRef}>
             {(() => {
@@ -229,14 +234,25 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                       ? 'En curso'
                       : activity?.activities?.[0]?.status === 'error'
                         ? 'Error en ejecución'
-                        : 'Inactivo'}
+                        : activity?.estadoBusqueda === 'completado' || activity?.activities?.some((a) => a.status === 'completed')
+                          ? 'Búsqueda finalizada'
+                          : 'Inactivo'}
                   </span>
                 </div>
 
                 <div className="mt-3 space-y-2.5">
-                  {activity?.activeActivities?.length > 0 ? (
-                    activity.activeActivities.map((item) => {
-                      const elapsed = formatElapsed((activity.now || Date.now()) - item.startedAt)
+                  {activity?.activeActivities?.length > 0 || activity?.isProcessing ? (
+                    (activity?.activeActivities?.length
+                      ? activity.activeActivities
+                      : [
+                          {
+                            id: 'live-processing',
+                            type: 'exploratoria',
+                            registrosNuevos: 0,
+                            metaSolicitada: activity?.reservationMeta ?? null,
+                          },
+                        ]
+                    ).map((item) => {
                       const isExp = item.type === 'exploratoria'
                       const rawNuevos = item.registrosNuevos ?? 0
                       const meta = item.metaSolicitada
@@ -248,11 +264,9 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                           className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3"
                         >
                           <div className="flex items-center gap-2">
-                            <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-500" />
+                            <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
                             <p className="text-xs font-bold text-ink">
-                              {isExp
-                                ? `Búsqueda Exploratoria en ejecución (${elapsed})`
-                                : `Búsqueda Específica en ejecución (${elapsed})`}
+                              Búsqueda en curso · Verificando prospectos...
                             </p>
                           </div>
                           {(meta > 0 || nuevos > 0) && (
@@ -287,7 +301,11 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                     })
                   ) : (
                     <div className="rounded-xl border border-line bg-mist/40 p-3 text-center">
-                      <p className="text-xs font-semibold text-ink">Sin procesos en ejecución</p>
+                      <p className="text-xs font-semibold text-ink">
+                        {activity?.estadoBusqueda === 'completado' || activity?.activities?.some((a) => a.status === 'completed')
+                          ? 'Búsqueda finalizada'
+                          : 'Sin procesos en ejecución'}
+                      </p>
                       <button
                         type="button"
                         id="activity-refresh-now"
@@ -341,8 +359,8 @@ export default function PrivateTopbar({ sections = [], active, onChange }) {
                                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                                 {item.type === 'exploratoria' ? 'Búsqueda Exploratoria' : 'Búsqueda Específica'}
                               </span>
-                              <span className="font-mono text-[10px] text-muted">
-                                {formatElapsed((item.finishedAt || item.startedAt) - item.startedAt)}
+                              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-300">
+                                Búsqueda finalizada
                               </span>
                             </div>
                           ))}

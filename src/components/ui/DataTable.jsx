@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Download, ExternalLink, FileSpreadsheet, Loader2, Newspaper, RotateCcw, Search, SearchX, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileSpreadsheet, Loader2, Newspaper, RotateCcw, Search, SearchX, Trash2, X } from 'lucide-react'
 import Modal from './Modal'
 import { usePreferences } from '../../context/PreferencesContext'
 import { useToast } from './Toast'
@@ -41,7 +41,8 @@ const isRowCreatedToday = (row) => {
 /**
  * Tabla genérica con buscador interno, barra de filtros avanzados (Fecha/Novedad, Industria, Tamaño, Verificación),
  * etiqueta verde "Nuevo" para registros creados hoy, selección individual/múltiple,
- * eliminación instantánea (soft delete) con spinner visual por fila y exportación CSV / Excel.
+ * eliminación instantánea (soft delete) con spinner visual por fila, exportación CSV / Excel,
+ * botones flotantes laterales (← / →) y arrastre horizontal con el cursor (drag-to-scroll).
  * Muestra el 100% de los registros sin recortar a 20.
  */
 export default function DataTable({
@@ -71,6 +72,81 @@ export default function DataTable({
   const [confirmIds, setConfirmIds] = useState(null) // null | array de ids a eliminar en lote
   const [deletingIds, setDeletingIds] = useState(() => new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
+
+  // Scroll horizontal asistido: flechas flotantes laterales + drag-to-scroll
+  const scrollContainerRef = useRef(null)
+  const dragStateRef = useRef({
+    isDown: false,
+    isDragging: false,
+    startX: 0,
+    scrollLeft: 0,
+  })
+  const [isDraggingUI, setIsDraggingUI] = useState(false)
+  const [scrollState, setScrollState] = useState({ canLeft: false, canRight: true, hasOverflow: false })
+
+  const updateScrollButtons = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+    const current = el.scrollLeft
+    const hasOverflow = maxScroll > 4
+    const canLeft = hasOverflow && current > 4
+    const canRight = hasOverflow && current < maxScroll - 4
+    setScrollState((prev) =>
+      prev.canLeft === canLeft && prev.canRight === canRight && prev.hasOverflow === hasOverflow
+        ? prev
+        : { canLeft, canRight, hasOverflow },
+    )
+  }, [])
+
+  const scrollHorizontally = useCallback((direction) => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const step = Math.max(280, Math.round(el.clientWidth * 0.65))
+    el.scrollBy({ left: direction * step, behavior: 'smooth' })
+  }, [])
+
+  const handleMouseDown = useCallback((e) => {
+    if (e.button !== 0) return
+    const target = e.target
+    if (target && target.closest('a, button, input, select, textarea, label')) return
+    const el = scrollContainerRef.current
+    if (!el) return
+    dragStateRef.current = {
+      isDown: true,
+      isDragging: false,
+      startX: e.pageX - el.offsetLeft,
+      scrollLeft: el.scrollLeft,
+    }
+  }, [])
+
+  const handleMouseMove = useCallback((e) => {
+    const state = dragStateRef.current
+    if (!state.isDown) return
+    const el = scrollContainerRef.current
+    if (!el) return
+    const x = e.pageX - el.offsetLeft
+    const delta = x - state.startX
+    if (!state.isDragging && Math.abs(delta) > 5) {
+      state.isDragging = true
+      setIsDraggingUI(true)
+    }
+    if (state.isDragging) {
+      e.preventDefault()
+      el.scrollLeft = state.scrollLeft - delta * 1.25
+    }
+  }, [])
+
+  const stopDragging = useCallback(() => {
+    if (!dragStateRef.current.isDown) return
+    dragStateRef.current.isDown = false
+    if (dragStateRef.current.isDragging) {
+      setTimeout(() => {
+        dragStateRef.current.isDragging = false
+      }, 0)
+    }
+    setIsDraggingUI(false)
+  }, [])
 
   const colLabels = useMemo(() => t('table.cols') || {}, [t])
   const columns = useMemo(() => deriveColumns(rows, colLabels, { hideKeys }), [rows, colLabels, hideKeys])
@@ -149,6 +225,15 @@ export default function DataTable({
       return columns.some((c) => formatPlainValue(row[c.key], locale).toLowerCase().includes(q))
     })
   }, [indexedRows, columns, query, locale, enableResultFilters, dateFilter, dateFrom, dateTo, industryFilter, sizeFilter, verifierFilter])
+
+  useEffect(() => {
+    updateScrollButtons()
+    const el = scrollContainerRef.current
+    if (!el) return undefined
+    const onResize = () => updateScrollButtons()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [updateScrollButtons, filtered.length, columns.length])
 
   const selectableFilteredIds = useMemo(() => filtered.map((r) => r.id).filter((id) => id !== null), [filtered])
   const selectedInView = useMemo(() => selectableFilteredIds.filter((id) => selected.has(id)), [selectableFilteredIds, selected])
@@ -444,65 +529,151 @@ export default function DataTable({
       {!filtered.length ? (
         <div className="px-6 py-12 text-center text-xs text-muted">{t('table.noMatches')}</div>
       ) : (
-        <div className="table-scroll">
-          <table className="w-full min-w-[720px] border-collapse text-left text-xs">
-            <thead>
-              <tr className="border-b border-line bg-mist text-[10px] font-semibold uppercase tracking-wider text-muted">
-                {selectable && onDeleteIds && (
-                  <th className="w-10 px-4 py-3.5">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleAll}
-                      disabled={!selectableFilteredIds.length}
-                      aria-label={t('table.selectAll')}
-                      title={t('table.selectAll')}
-                      className="h-4 w-4 rounded border-line accent-electric cursor-pointer"
-                    />
-                  </th>
-                )}
-                {columns.map((c) => (
-                  <th key={c.key} className="whitespace-nowrap px-4 py-3.5">
-                    {c.label}
-                  </th>
-                ))}
-                {showNewsSoon && <th className="whitespace-nowrap px-4 py-3.5">{t('search.results.cols.news')}</th>}
-                {selectable && onDeleteIds && <th className="w-14 px-4 py-3.5 text-right">{t('table.actions')}</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {filtered.map(({ row, id, key, isToday }) => {
-                const isSelected = id !== null && selected.has(id)
-                const isRowDeleting = id !== null && deletingIds.has(id)
-                return (
-                  <tr
-                    key={key}
-                    className={`transition-colors hover:bg-electric-50/40 ${isSelected ? 'bg-electric-50/60' : ''} ${
-                      isRowDeleting ? 'opacity-50' : ''
-                    }`}
-                  >
-                    {selectable && onDeleteIds && (
-                      <td className="px-4 py-3.5 align-top">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleOne(id)}
-                          disabled={id === null || isRowDeleting}
-                          aria-label={t('table.selectRow')}
-                          className="h-4 w-4 rounded border-line accent-electric cursor-pointer disabled:opacity-40"
-                        />
-                      </td>
-                    )}
+        <div className="group/table relative">
+          {/* Botones flotantes laterales de desplazamiento horizontal (← / →) */}
+          {scrollState.hasOverflow && (
+            <>
+              <button
+                type="button"
+                onClick={() => scrollHorizontally(-1)}
+                disabled={!scrollState.canLeft}
+                aria-label="Desplazar tabla a la izquierda"
+                title="Desplazar a la izquierda (←)"
+                className={`absolute left-2 top-1/2 z-20 -translate-y-1/2 grid h-10 w-10 place-items-center rounded-full border border-line bg-surface/95 text-ink shadow-lift backdrop-blur-md transition-all duration-200 cursor-pointer hover:border-electric hover:bg-electric hover:text-white ${
+                  scrollState.canLeft
+                    ? 'opacity-90 group-hover/table:opacity-100'
+                    : 'pointer-events-none opacity-0'
+                }`}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollHorizontally(1)}
+                disabled={!scrollState.canRight}
+                aria-label="Desplazar tabla a la derecha"
+                title="Desplazar a la derecha (→)"
+                className={`absolute right-2 top-1/2 z-20 -translate-y-1/2 grid h-10 w-10 place-items-center rounded-full border border-line bg-surface/95 text-ink shadow-lift backdrop-blur-md transition-all duration-200 cursor-pointer hover:border-electric hover:bg-electric hover:text-white ${
+                  scrollState.canRight
+                    ? 'opacity-90 group-hover/table:opacity-100'
+                    : 'pointer-events-none opacity-0'
+                }`}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </>
+          )}
 
-                    {columns.map((c) => {
-                      const raw = row[c.key]
-                      const text = formatPlainValue(raw, locale)
-                      const showNewBadge = isToday && c.key === firstBadgeColKey
-                      if (!text) {
+          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+          <div
+            ref={scrollContainerRef}
+            onScroll={updateScrollButtons}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={stopDragging}
+            onMouseLeave={stopDragging}
+            className={`table-scroll ${isDraggingUI ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
+          >
+            <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-line bg-mist text-[10px] font-semibold uppercase tracking-wider text-muted">
+                  {selectable && onDeleteIds && (
+                    <th className="w-10 px-4 py-3.5">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        disabled={!selectableFilteredIds.length}
+                        aria-label={t('table.selectAll')}
+                        title={t('table.selectAll')}
+                        className="h-4 w-4 rounded border-line accent-electric cursor-pointer"
+                      />
+                    </th>
+                  )}
+                  {columns.map((c) => (
+                    <th key={c.key} className="whitespace-nowrap px-4 py-3.5">
+                      {c.label}
+                    </th>
+                  ))}
+                  {showNewsSoon && <th className="whitespace-nowrap px-4 py-3.5">{t('search.results.cols.news')}</th>}
+                  {selectable && onDeleteIds && <th className="w-14 px-4 py-3.5 text-right">{t('table.actions')}</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {filtered.map(({ row, id, key, isToday }) => {
+                  const isSelected = id !== null && selected.has(id)
+                  const isRowDeleting = id !== null && deletingIds.has(id)
+                  return (
+                    <tr
+                      key={key}
+                      className={`transition-colors hover:bg-electric-50/40 ${isSelected ? 'bg-electric-50/60' : ''} ${
+                        isRowDeleting ? 'opacity-50' : ''
+                      }`}
+                    >
+                      {selectable && onDeleteIds && (
+                        <td className="px-4 py-3.5 align-top">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleOne(id)}
+                            disabled={id === null || isRowDeleting}
+                            aria-label={t('table.selectRow')}
+                            className="h-4 w-4 rounded border-line accent-electric cursor-pointer disabled:opacity-40"
+                          />
+                        </td>
+                      )}
+
+                      {columns.map((c) => {
+                        const raw = row[c.key]
+                        const text = formatPlainValue(raw, locale)
+                        const showNewBadge = isToday && c.key === firstBadgeColKey
+                        if (!text) {
+                          return (
+                            <td key={c.key} className="px-4 py-3.5 align-top text-muted/60">
+                              <span className="inline-flex items-center gap-1.5">
+                                <span>—</span>
+                                {showNewBadge && (
+                                  <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                                    {t('table.newBadge')}
+                                  </span>
+                                )}
+                              </span>
+                            </td>
+                          )
+                        }
+                        if (isUrlValue(c.key, String(raw))) {
+                          return (
+                            <td key={c.key} className="max-w-[220px] px-4 py-3.5 align-top">
+                              <a
+                                href={toHref(raw)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 break-all font-medium text-electric hover:underline"
+                              >
+                                <span className="truncate max-w-[180px]">{String(raw).replace(/^https?:\/\/(www\.)?/i, '')}</span>
+                                <ExternalLink className="h-3 w-3 shrink-0" />
+                              </a>
+                            </td>
+                          )
+                        }
+                        if (isEmailKey(c.key)) {
+                          return (
+                            <td key={c.key} className="whitespace-nowrap px-4 py-3.5 align-top font-mono text-[11px] text-ink">
+                              {text}
+                            </td>
+                          )
+                        }
+                        if (isPhoneKey(c.key)) {
+                          return (
+                            <td key={c.key} className="whitespace-nowrap px-4 py-3.5 align-top font-mono text-[11px] text-ink-soft">
+                              {text}
+                            </td>
+                          )
+                        }
                         return (
-                          <td key={c.key} className="px-4 py-3.5 align-top text-muted/60">
-                            <span className="inline-flex items-center gap-1.5">
-                              <span>—</span>
+                          <td key={c.key} className="max-w-[280px] px-4 py-3.5 align-top leading-relaxed text-ink-soft">
+                            <span className="inline-flex flex-wrap items-center gap-1.5">
+                              <span>{text}</span>
                               {showNewBadge && (
                                 <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
                                   {t('table.newBadge')}
@@ -511,77 +682,36 @@ export default function DataTable({
                             </span>
                           </td>
                         )
-                      }
-                      if (isUrlValue(c.key, String(raw))) {
-                        return (
-                          <td key={c.key} className="max-w-[220px] px-4 py-3.5 align-top">
-                            <a
-                              href={toHref(raw)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 break-all font-medium text-electric hover:underline"
-                            >
-                              <span className="truncate max-w-[180px]">{String(raw).replace(/^https?:\/\/(www\.)?/i, '')}</span>
-                              <ExternalLink className="h-3 w-3 shrink-0" />
-                            </a>
-                          </td>
-                        )
-                      }
-                      if (isEmailKey(c.key)) {
-                        return (
-                          <td key={c.key} className="whitespace-nowrap px-4 py-3.5 align-top font-mono text-[11px] text-ink">
-                            {text}
-                          </td>
-                        )
-                      }
-                      if (isPhoneKey(c.key)) {
-                        return (
-                          <td key={c.key} className="whitespace-nowrap px-4 py-3.5 align-top font-mono text-[11px] text-ink-soft">
-                            {text}
-                          </td>
-                        )
-                      }
-                      return (
-                        <td key={c.key} className="max-w-[280px] px-4 py-3.5 align-top leading-relaxed text-ink-soft">
-                          <span className="inline-flex flex-wrap items-center gap-1.5">
-                            <span>{text}</span>
-                            {showNewBadge && (
-                              <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                                {t('table.newBadge')}
-                              </span>
-                            )}
+                      })}
+
+                      {showNewsSoon && (
+                        <td className="whitespace-nowrap px-4 py-3.5 align-top">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-line px-2.5 py-1 text-[10px] font-semibold text-muted">
+                            <Newspaper className="h-3 w-3" /> {t('search.results.newsSoon')}
                           </span>
                         </td>
-                      )
-                    })}
+                      )}
 
-                    {showNewsSoon && (
-                      <td className="whitespace-nowrap px-4 py-3.5 align-top">
-                        <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-line px-2.5 py-1 text-[10px] font-semibold text-muted">
-                          <Newspaper className="h-3 w-3" /> {t('search.results.newsSoon')}
-                        </span>
-                      </td>
-                    )}
-
-                    {selectable && onDeleteIds && (
-                      <td className="px-4 py-3.5 text-right align-top">
-                        <button
-                          type="button"
-                          onClick={() => handleInstantRowDelete(id)}
-                          disabled={id === null || isRowDeleting}
-                          title={t('table.deleteRow')}
-                          aria-label={t('table.deleteRow')}
-                          className="grid ml-auto h-8 w-8 place-items-center rounded-lg text-muted transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40 cursor-pointer"
-                        >
-                          {isRowDeleting ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      {selectable && onDeleteIds && (
+                        <td className="px-4 py-3.5 text-right align-top">
+                          <button
+                            type="button"
+                            onClick={() => handleInstantRowDelete(id)}
+                            disabled={id === null || isRowDeleting}
+                            title={t('table.deleteRow')}
+                            aria-label={t('table.deleteRow')}
+                            className="grid ml-auto h-8 w-8 place-items-center rounded-lg text-muted transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40 cursor-pointer"
+                          >
+                            {isRowDeleting ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

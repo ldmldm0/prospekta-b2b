@@ -253,7 +253,18 @@ export function normalizeEmpresasResponse(d = {}) {
 
 /**
  * Respuesta de admin-gestion (listar_todo) →
- * { usuarios, leads, boveda_exploratoria, boveda_especifica, total_exploratoria, total_especifica }.
+ * {
+ *   usuarios,
+ *   leads,
+ *   boveda_exploratoria,
+ *   boveda_especifica,
+ *   total_prospekta_exploratoria,
+ *   total_prospekta_especifica,
+ *   acumulado_bodega_exploratoria,
+ *   acumulado_bodega_especifica,
+ *   total_exploratoria,
+ *   total_especifica
+ * }.
  */
 export function normalizeAdminData(d = {}) {
   const boveda_exploratoria = toArray(
@@ -264,6 +275,56 @@ export function normalizeAdminData(d = {}) {
   )
   const metricas = d.metricas || d.stats || {}
   const rawUsers = toArray(d.usuarios ?? d.prospekta_usuarios)
+
+  const isBodegaGeneralRow = (r) => {
+    const cid = String(r?.id_cliente ?? r?.cliente_id ?? r?.email_cliente ?? '').trim().toLowerCase()
+    return cid === 'boveda_general' || cid === 'bodega_general'
+  }
+
+  const expClientRows = boveda_exploratoria.filter((r) => {
+    const cid = String(r?.id_cliente ?? r?.cliente_id ?? '').trim().toLowerCase()
+    return Boolean(cid) && !isBodegaGeneralRow(r)
+  })
+  const expBodegaRows = boveda_exploratoria.filter(isBodegaGeneralRow)
+
+  const espClientRows = boveda_especifica.filter((r) => {
+    const cid = String(r?.id_cliente ?? r?.cliente_id ?? '').trim().toLowerCase()
+    return Boolean(cid) && !isBodegaGeneralRow(r)
+  })
+  const espBodegaRows = boveda_especifica.filter(isBodegaGeneralRow)
+
+  const total_prospekta_exploratoria =
+    d.total_prospekta_exploratoria ??
+    metricas.total_prospekta_exploratoria ??
+    d.prospectos_clientes_exploratoria ??
+    metricas.prospectos_clientes_exploratoria ??
+    (expClientRows.length || (expBodegaRows.length ? 0 : (d.total_exploratoria ?? metricas.total_exploratoria ?? boveda_exploratoria.length)))
+
+  const total_prospekta_especifica =
+    d.total_prospekta_especifica ??
+    metricas.total_prospekta_especifica ??
+    d.prospectos_clientes_especifica ??
+    metricas.prospectos_clientes_especifica ??
+    (espClientRows.length || (espBodegaRows.length ? 0 : (d.total_especifica ?? metricas.total_especifica ?? boveda_especifica.length)))
+
+  const acumulado_bodega_exploratoria =
+    d.acumulado_bodega_exploratoria ??
+    metricas.acumulado_bodega_exploratoria ??
+    d.total_bodega_exploratoria ??
+    metricas.total_bodega_exploratoria ??
+    d.boveda_general_exploratoria ??
+    metricas.boveda_general_exploratoria ??
+    (expBodegaRows.length || boveda_exploratoria.length)
+
+  const acumulado_bodega_especifica =
+    d.acumulado_bodega_especifica ??
+    metricas.acumulado_bodega_especifica ??
+    d.total_bodega_especifica ??
+    metricas.total_bodega_especifica ??
+    d.boveda_general_especifica ??
+    metricas.boveda_general_especifica ??
+    (espBodegaRows.length || boveda_especifica.length)
+
   return {
     usuarios: rawUsers.map((u) => {
       const email = String(u.email ?? u.correo ?? u.id_cliente ?? '').trim().toLowerCase()
@@ -276,6 +337,10 @@ export function normalizeAdminData(d = {}) {
     leads: toArray(d.leads ?? d.prospekta_contacto_leads ?? d.contacto_leads),
     boveda_exploratoria,
     boveda_especifica,
+    total_prospekta_exploratoria: Number(total_prospekta_exploratoria) || 0,
+    total_prospekta_especifica: Number(total_prospekta_especifica) || 0,
+    acumulado_bodega_exploratoria: Number(acumulado_bodega_exploratoria) || 0,
+    acumulado_bodega_especifica: Number(acumulado_bodega_especifica) || 0,
     total_exploratoria:
       d.total_exploratoria ?? metricas.total_exploratoria ?? metricas.prospectos_exploratoria ?? boveda_exploratoria.length,
     total_especifica:

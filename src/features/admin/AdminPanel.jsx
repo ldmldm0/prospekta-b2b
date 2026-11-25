@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  Archive,
   Coins,
   Compass,
+  Database,
   Eye,
   EyeOff,
   Inbox,
@@ -16,6 +18,7 @@ import {
   Search,
   ShieldCheck,
   Target,
+  Trash2,
   Unlock,
   UserPlus,
   Users,
@@ -23,7 +26,8 @@ import {
 } from 'lucide-react'
 import StatCard from '../../components/ui/StatCard'
 import DataTable from '../../components/ui/DataTable'
-import { isSuperAdminUser, useAuth } from '../../context/AuthContext'
+import Modal from '../../components/ui/Modal'
+import { isAdminPanelUser, isSuperAdminUser, useAuth } from '../../context/AuthContext'
 import { usePreferences } from '../../context/PreferencesContext'
 import { useToast } from '../../components/ui/Toast'
 import { adminApi } from '../../services/api'
@@ -43,10 +47,23 @@ const isProtectedAccount = (u) => {
   return false
 }
 
+/** Determina si la fila pertenece a un usuario con rol Administrador (admin o superadmin). */
+const isAdminRoleAccount = (u) => {
+  if (!u || typeof u !== 'object') return false
+  if (isProtectedAccount(u) || isAdminPanelUser(u)) return true
+  const rol = String(u.rol ?? '').trim().toLowerCase()
+  return rol === 'admin' || rol === 'administrador' || rol === 'superadmin' || rol === 'super_admin' || rol === 'master'
+}
+
 /**
  * Panel Administrador real conectado a POST admin-gestion:
- * - 4 tarjetas superiores con métricas reales (Total Clientes, Créditos Activos, Total Prospectos Exploratoria, Total Prospectos Específica)
- * - Gestión de usuarios (crear, editar, créditos +/-/=, cambiar_estado con protección de superadmin)
+ * - 4 tarjetas superiores con métricas reales:
+ *   1) Total Prospekta Exploratoria (prospectos asignados a clientes con id_cliente != boveda_general)
+ *   2) Total Prospekta Específica (prospectos específicos asignados a clientes)
+ *   3) Acumulado Bodega Exploratoria (prospectos guardados en boveda_general)
+ *   4) Acumulado Bodega Específica (prospectos específicos guardados en bodega)
+ * - Gestión de usuarios (crear, editar, créditos +/-/=, cambiar_estado y eliminar solo clientes estándar;
+ *   bloquea y oculta la acción de eliminar cuando la fila pertenece a otro Administrador)
  * - Leads de contacto
  * - Bóveda Global de Datos ("Bóveda: Exploratoria" y "Bóveda: Específica") exclusiva para superadmin y protegida por Token Maestro de Licencia.
  */
@@ -60,8 +77,10 @@ export default function AdminPanel() {
   const [leads, setLeads] = useState([])
   const [bovedaExp, setBovedaExp] = useState([])
   const [bovedaEsp, setBovedaEsp] = useState([])
-  const [totalExpCount, setTotalExpCount] = useState(0)
-  const [totalEspCount, setTotalEspCount] = useState(0)
+  const [totalProspektaExp, setTotalProspektaExp] = useState(0)
+  const [totalProspektaEsp, setTotalProspektaEsp] = useState(0)
+  const [acumuladoBodegaExp, setAcumuladoBodegaExp] = useState(0)
+  const [acumuladoBodegaEsp, setAcumuladoBodegaEsp] = useState(0)
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -73,6 +92,8 @@ export default function AdminPanel() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [creditsUser, setCreditsUser] = useState(null)
+  const [deleteTargetUser, setDeleteTargetUser] = useState(null)
+  const [deletingUser, setDeletingUser] = useState(false)
 
   // Protección con Token Maestro de Licencia para la Bóveda Global
   const [vaultUnlocked, setVaultUnlocked] = useState(false)
@@ -100,8 +121,10 @@ export default function AdminPanel() {
         setLeads(res.leads)
         if (res.boveda_exploratoria?.length) setBovedaExp(res.boveda_exploratoria)
         if (res.boveda_especifica?.length) setBovedaEsp(res.boveda_especifica)
-        setTotalExpCount(Number(res.total_exploratoria) || res.boveda_exploratoria?.length || 0)
-        setTotalEspCount(Number(res.total_especifica) || res.boveda_especifica?.length || 0)
+        setTotalProspektaExp(Number(res.total_prospekta_exploratoria) || 0)
+        setTotalProspektaEsp(Number(res.total_prospekta_especifica) || 0)
+        setAcumuladoBodegaExp(Number(res.acumulado_bodega_exploratoria) || 0)
+        setAcumuladoBodegaEsp(Number(res.acumulado_bodega_especifica) || 0)
       } catch (err) {
         if (!silent) setError(err.message || t('admin.errorGeneric'))
         else toast(err.message || t('admin.errorGeneric'), 'error')
@@ -116,15 +139,6 @@ export default function AdminPanel() {
   useEffect(() => {
     loadAll({ silent: false })
   }, [loadAll])
-
-  const totalClients = useMemo(
-    () => usuarios.filter((u) => !isSuperAdminUser(u)).length || usuarios.length,
-    [usuarios],
-  )
-  const activeCredits = useMemo(
-    () => usuarios.filter((u) => !isSuspended(u)).reduce((sum, u) => sum + (Number(u.saldo_creditos) || 0), 0),
-    [usuarios],
-  )
 
   const filteredUsers = useMemo(() => {
     const q = userQuery.trim().toLowerCase()
@@ -180,6 +194,37 @@ export default function AdminPanel() {
     }
   }
 
+  /** Elimina un usuario cliente estándar (bloqueado estrictamente si el objetivo tiene rol Administrador o es la propia cuenta). */
+  const handleConfirmDeleteUser = async () => {
+    if (!deleteTargetUser) return
+    const targetEmail = String(deleteTargetUser.email || deleteTargetUser.id_cliente || deleteTargetUser.id || '')
+      .trim()
+      .toLowerCase()
+    const isSelfTarget = String(targetEmail) === String(idAdmin).trim().toLowerCase()
+
+    if (isSelfTarget || isAdminRoleAccount(deleteTargetUser)) {
+      toast(t('admin.cannotDeleteAdmin'), 'error')
+      setDeleteTargetUser(null)
+      return
+    }
+
+    setDeletingUser(true)
+    try {
+      await adminApi.run('eliminar_usuario', idAdmin, {
+        id_cliente: targetEmail,
+        email: targetEmail,
+        id: deleteTargetUser.id ?? targetEmail,
+      })
+      toast(t('admin.toastDeleted'))
+      setDeleteTargetUser(null)
+      await loadAll({ silent: true })
+    } catch (err) {
+      toast(err.message || t('admin.errorGeneric'), 'error')
+    } finally {
+      setDeletingUser(false)
+    }
+  }
+
   const handleUnlockVault = async (e) => {
     e.preventDefault()
     const token = licenseToken.trim()
@@ -190,11 +235,13 @@ export default function AdminPanel() {
       const res = await adminApi.consultarBoveda(idAdmin, token)
       if (res.boveda_exploratoria?.length) {
         setBovedaExp(res.boveda_exploratoria)
-        setTotalExpCount(res.boveda_exploratoria.length)
+        setTotalProspektaExp(res.total_prospekta_exploratoria)
+        setAcumuladoBodegaExp(res.acumulado_bodega_exploratoria)
       }
       if (res.boveda_especifica?.length) {
         setBovedaEsp(res.boveda_especifica)
-        setTotalEspCount(res.boveda_especifica.length)
+        setTotalProspektaEsp(res.total_prospekta_especifica)
+        setAcumuladoBodegaEsp(res.acumulado_bodega_especifica)
       }
       setVaultUnlocked(true)
       toast(t('admin.vaultUnlockedToast'))
@@ -244,14 +291,14 @@ export default function AdminPanel() {
           {
             id: 'boveda_exploratoria',
             label: t('admin.tabVaultExp'),
-            count: totalExpCount || bovedaExp.length,
+            count: acumuladoBodegaExp || bovedaExp.length,
             icon: Compass,
             locked: !vaultUnlocked,
           },
           {
             id: 'boveda_especifica',
             label: t('admin.tabVaultEsp'),
-            count: totalEspCount || bovedaEsp.length,
+            count: acumuladoBodegaEsp || bovedaEsp.length,
             icon: Target,
             locked: !vaultUnlocked,
           },
@@ -263,32 +310,32 @@ export default function AdminPanel() {
 
   return (
     <section className="space-y-6 animate-pop">
-      {/* 4 Tarjetas superiores con métricas reales */}
+      {/* 4 Tarjetas superiores divididas en las 4 métricas requeridas */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           tone="navy"
-          icon={Users}
-          label={t('admin.statClients')}
-          value={totalClients.toLocaleString(locale)}
-          hint={t('admin.statClientsHint')}
-        />
-        <StatCard
-          icon={Coins}
-          label={t('admin.statCredits')}
-          value={activeCredits.toLocaleString(locale)}
-          hint={t('admin.statCreditsHint')}
-        />
-        <StatCard
           icon={Compass}
-          label={t('admin.statExploratoryTotal')}
-          value={(totalExpCount || bovedaExp.length).toLocaleString(locale)}
-          hint={t('admin.statExploratoryTotalHint')}
+          label={t('admin.statProspektaExp')}
+          value={totalProspektaExp.toLocaleString(locale)}
+          hint={t('admin.statProspektaExpHint')}
         />
         <StatCard
           icon={Target}
-          label={t('admin.statSpecificTotal')}
-          value={(totalEspCount || bovedaEsp.length).toLocaleString(locale)}
-          hint={t('admin.statSpecificTotalHint')}
+          label={t('admin.statProspektaEsp')}
+          value={totalProspektaEsp.toLocaleString(locale)}
+          hint={t('admin.statProspektaEspHint')}
+        />
+        <StatCard
+          icon={Database}
+          label={t('admin.statBodegaExp')}
+          value={acumuladoBodegaExp.toLocaleString(locale)}
+          hint={t('admin.statBodegaExpHint')}
+        />
+        <StatCard
+          icon={Archive}
+          label={t('admin.statBodegaEsp')}
+          value={acumuladoBodegaEsp.toLocaleString(locale)}
+          hint={t('admin.statBodegaEspHint')}
         />
       </div>
 
@@ -378,10 +425,13 @@ export default function AdminPanel() {
                     {filteredUsers.map((u, idx) => {
                       const uid = u.id_cliente ?? u.id ?? `u-${idx}`
                       const suspended = isSuspended(u)
-                      const role = String(u.rol || 'admin').toLowerCase()
                       const isSuper = isSuperAdminUser(u)
                       const protectedUser = isProtectedAccount(u)
-                      const isSelf = String(uid) === String(idAdmin)
+                      const isAdminRow = isAdminRoleAccount(u)
+                      const isSelf = String(uid).trim().toLowerCase() === String(idAdmin).trim().toLowerCase()
+                      // Un administrador NUNCA puede eliminar a otro administrador (bloqueamos y ocultamos el botón)
+                      const canDeleteUser = !isSelf && !isAdminRow
+
                       return (
                         <tr key={uid} className="transition-colors hover:bg-electric-50/40">
                           <td className="px-4 py-3.5 align-middle">
@@ -405,12 +455,12 @@ export default function AdminPanel() {
                               className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
                                 isSuper
                                   ? 'border border-amber-500/30 bg-amber-500/10 text-amber-400'
-                                  : role === 'admin'
+                                  : isAdminRow
                                     ? 'bg-electric-50 text-electric'
                                     : 'bg-mist text-ink-soft'
                               }`}
                             >
-                              {isSuper ? t('admin.roles.superadmin') : role === 'admin' ? t('admin.roles.admin') : t('admin.roles.cliente')}
+                              {isSuper ? t('admin.roles.superadmin') : isAdminRow ? t('admin.roles.admin') : t('admin.roles.cliente')}
                             </span>
                           </td>
                           <td className="px-4 py-3.5 align-middle font-mono font-bold text-ink">
@@ -473,6 +523,20 @@ export default function AdminPanel() {
                                 )}
                                 {suspended ? t('admin.activate') : t('admin.suspend')}
                               </button>
+
+                              {/* Acción Eliminar Usuario: oculta y bloqueada cuando la fila pertenece a otro Administrador */}
+                              {canDeleteUser && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteTargetUser(u)}
+                                  title={t('admin.deleteUserBtn')}
+                                  aria-label={t('admin.deleteUserBtn')}
+                                  className="btn btn-sm h-8 border border-red-500/30 bg-red-500/10 px-2.5 text-[11px] text-red-500 hover:bg-red-500/20 dark:text-red-300"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  {t('admin.deleteUserBtn')}
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -597,6 +661,44 @@ export default function AdminPanel() {
         isTargetProtected={isProtectedAccount(editUser)}
       />
       <CreditsModal user={creditsUser} onClose={closeCreditsModal} onSave={handleUpdateCredits} />
+
+      {/* Modal de confirmación para eliminar usuario (solo permitido para clientes estándar, nunca administradores) */}
+      <Modal
+        open={Boolean(deleteTargetUser)}
+        onClose={() => !deletingUser && setDeleteTargetUser(null)}
+        labelledBy="confirm-delete-user-title"
+      >
+        <div className="p-6 sm:p-8">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 text-red-500">
+            <Trash2 className="h-6 w-6" />
+          </div>
+          <h3 id="confirm-delete-user-title" className="mt-4 text-lg font-bold text-ink">
+            {t('admin.deleteUserTitle')}
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            {t('admin.deleteUserConfirm', { email: deleteTargetUser?.email || deleteTargetUser?.id_cliente || '' })}
+          </p>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeleteTargetUser(null)}
+              disabled={deletingUser}
+              className="btn btn-ghost btn-sm"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteUser}
+              disabled={deletingUser}
+              className="btn btn-sm bg-red-600 text-white hover:bg-red-700"
+            >
+              {deletingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {deletingUser ? t('table.deleting') : t('table.confirmBtn')}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </section>
   )
 }

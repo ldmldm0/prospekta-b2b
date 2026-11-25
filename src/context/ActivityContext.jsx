@@ -4,7 +4,6 @@ const ActivityContext = createContext(null)
 
 const MAX_POLL_DURATION_MS = 120 * 60 * 1000 // 120 minutos (2 horas)
 const POLL_INTERVAL_MS = 15 * 1000 // 15 segundos
-const MIN_COMPLETION_SIGNAL_MS = 15 * 1000 // 15 segundos
 
 /**
  * Contexto global para rastrear ejecuciones en vivo (Búsqueda Exploratoria / Específica)
@@ -12,7 +11,6 @@ const MIN_COMPLETION_SIGNAL_MS = 15 * 1000 // 15 segundos
  */
 export function ActivityProvider({ children }) {
   const [activities, setActivities] = useState([])
-  const [now, setNow] = useState(() => Date.now())
   const refreshHandlerRef = useRef(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
 
@@ -228,7 +226,7 @@ export function ActivityProvider({ children }) {
             a.baselineCredits !== null &&
             a.baselineCredits !== undefined &&
             Number(numericSaldo) !== Number(a.baselineCredits)
-          const serverCompleted = estadoStr === 'completado' && elapsed >= MIN_COMPLETION_SIGNAL_MS
+          const serverCompleted = estadoStr === 'completado'
 
           if (!isProcessingStatus && (serverCompleted || creditsChanged || elapsed >= MAX_POLL_DURATION_MS)) {
             changed = true
@@ -322,14 +320,14 @@ export function ActivityProvider({ children }) {
     [processingState.isProcessing, processingState.lockedSaldoInicial, runningExploratoria, reservationMeta],
   )
 
-  // Temporizador de 1s mientras haya procesos activos para mostrar mm:ss en vivo
+  // Auto-sincronización cada 15 segundos mientras exista una búsqueda activa
   useEffect(() => {
     if (!hasRunning) return undefined
-    setNow(Date.now())
-    const timer = setInterval(() => {
+    const poller = setInterval(() => {
+      if (refreshHandlerRef.current) {
+        refreshHandlerRef.current()
+      }
       const current = Date.now()
-      setNow(current)
-      // Si alguna actividad superó las 2 horas, marcarla como finalizada
       setActivities((prev) => {
         let changed = false
         const next = prev.map((a) => {
@@ -341,17 +339,6 @@ export function ActivityProvider({ children }) {
         })
         return changed ? next : prev
       })
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [hasRunning])
-
-  // Auto-sincronización cada 15 segundos mientras exista una búsqueda activa
-  useEffect(() => {
-    if (!hasRunning) return undefined
-    const poller = setInterval(() => {
-      if (refreshHandlerRef.current) {
-        refreshHandlerRef.current()
-      }
     }, POLL_INTERVAL_MS)
     return () => clearInterval(poller)
   }, [hasRunning])
@@ -361,7 +348,6 @@ export function ActivityProvider({ children }) {
       activities,
       activeActivities,
       hasRunning,
-      now,
       manualRefreshing,
       isProcessing: processingState.isProcessing,
       estadoBusqueda: processingState.estadoBusqueda,
@@ -380,7 +366,6 @@ export function ActivityProvider({ children }) {
       activities,
       activeActivities,
       hasRunning,
-      now,
       manualRefreshing,
       processingState.isProcessing,
       processingState.estadoBusqueda,
